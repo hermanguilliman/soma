@@ -598,6 +598,7 @@ button.th[data-dir="desc"] .th__arrow::before { content: '▼'; }
   font-size: 12.5px;
 }
 .footer p { margin: 0; line-height: 1.55; }
+.footer p + p { margin-top: 6px; }
 .footer a {
   color: var(--accent);
   text-decoration: underline;
