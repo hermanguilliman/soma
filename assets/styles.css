@@ -738,6 +738,24 @@ body.is-muted #mute { color: var(--text); }
   gap: 12px;
 }
 
+.player__quality {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color .2s, border-color .2s, background .2s;
+}
+.player__quality:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: #23232b;
+}
+
 /* equalizer — always occupies its space, wakes up while playing */
 .player__eq {
   display: inline-flex;

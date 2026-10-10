@@ -66,17 +66,18 @@ const el = {
   retry: $('retry'),
   toast: $('toast'),
   audio: $('audio'),
-  player: {
-    logo: $('playerLogo'),
-    fallback: $('playerFallback'),
-    title: $('playerTitle'),
-    now: $('playerNow'),
-    toggle: $('toggle'),
-    prev: $('prev'),
-    next: $('next'),
-    mute: $('mute'),
-    volume: $('volume'),
-  },
+    player: {
+      logo: $('playerLogo'),
+      fallback: $('playerFallback'),
+      title: $('playerTitle'),
+      now: $('playerNow'),
+      toggle: $('toggle'),
+      prev: $('prev'),
+      next: $('next'),
+      mute: $('mute'),
+      volume: $('volume'),
+      quality: $('playerQuality'),
+    },
 };
 
 /** Consecutive playback failures — used to stop the quality-fallback loop. */
@@ -490,6 +491,44 @@ async function ensureStream(channel) {
   return null;
 }
 
+async function changeQuality(newKind) {
+  if (!KINDS[newKind] || state.kind === newKind) return;
+  state.kind = newKind;
+  localStorage.setItem(KIND_KEY, state.kind);
+
+  const kindInput = el.kinds.querySelector(`input[value="${state.kind}"]`);
+  if (kindInput) kindInput.checked = true;
+
+  if (el.player.quality) {
+    el.player.quality.textContent = KINDS[state.kind].short;
+  }
+
+  updateStats();
+  render();
+  resolveAll();
+
+  if (state.currentId) {
+    const channel = byId(state.currentId);
+    if (channel) {
+      setPlayerNow('Смена качества потока…');
+      const stream = await ensureStream(channel);
+      if (stream && state.currentId === channel.id) {
+        const wasPlaying = state.playing || !el.audio.paused;
+        el.audio.src = stream.url;
+        if (wasPlaying) {
+          try {
+            await el.audio.play();
+          } catch {
+            // handle auto-play restrictions if any
+          }
+        }
+        refreshNowPlaying();
+        toast(`Качество изменено: ${KINDS[state.kind].label}`);
+      }
+    }
+  }
+}
+
 async function playChannel(id) {
   const channel = byId(id);
   if (!channel) return;
@@ -718,12 +757,16 @@ function bindEvents() {
   el.kinds.addEventListener('change', (event) => {
     const input = event.target;
     if (!(input instanceof HTMLInputElement) || input.name !== 'kind') return;
-    state.kind = input.value;
-    localStorage.setItem(KIND_KEY, state.kind);
-    updateStats();
-    render();
-    resolveAll();
+    void changeQuality(input.value);
   });
+
+  if (el.player.quality) {
+    el.player.quality.addEventListener('click', () => {
+      const currentIndex = KIND_ORDER.indexOf(state.kind);
+      const nextKind = KIND_ORDER[(currentIndex + 1) % KIND_ORDER.length];
+      void changeQuality(nextKind);
+    });
+  }
 
   el.search.addEventListener('input', () => {
     state.query = el.search.value;
@@ -848,6 +891,10 @@ function init() {
 
   const kindInput = el.kinds.querySelector(`input[value="${state.kind}"]`);
   if (kindInput) kindInput.checked = true;
+
+  if (el.player.quality) {
+    el.player.quality.textContent = KINDS[state.kind].short;
+  }
 
   const savedVolume = Number.parseFloat(localStorage.getItem(VOLUME_KEY) ?? '');
   const volume = Number.isFinite(savedVolume) ? Math.min(Math.max(savedVolume, 0), 1) : 0.8;
