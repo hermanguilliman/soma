@@ -25,6 +25,7 @@ const CACHE_KEY = 'soma.streams.v1';
 const CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const KIND_KEY = 'soma.kind';
 const VOLUME_KEY = 'soma.volume';
+const FAVORITES_KEY = 'soma.favorites.v1';
 const CONCURRENCY = 6;
 const NOW_PLAYING_INTERVAL = 20_000;
 const ICY_INTERVAL = 30_000;         // how often to re-read a stream's ICY title
@@ -80,6 +81,18 @@ const SOURCES = {
     cols: { title: 'Станция', genre: 'Теги', now: 'Страна', listeners: 'Голоса' },
     sortLabels: { title: 'станции', genre: 'тегам', now: 'стране', listeners: 'голосам' },
   },
+  favorites: {
+    id: 'favorites',
+    label: 'Любимое',
+    pageTitle: 'Любимые станции',
+    file: 'Favorites.m3u8',
+    searchPlaceholder: 'Поиск по любимым станциям…',
+    nowPrefix: 'Детали',
+    listenersTitle: 'рейтинг',
+    album: "Guilliman's Radio (soma.guilliman.ru)",
+    cols: { title: 'Станция', genre: 'Жанр', now: 'Детали', listeners: 'Рейтинг' },
+    sortLabels: { title: 'станции', genre: 'жанру', now: 'деталям', listeners: 'рейтингу' },
+  },
 };
 
 /* ------------------------------------------------- state --- */
@@ -96,6 +109,7 @@ const state = {
   sort: { key: 'listeners', dir: 'desc' },
   limit: 0,
   rb: { stations: [], key: '', facets: false, api: '' },  // radio-browser result cache
+  favorites: [],               // saved station snapshots (both sources)
   rbTag: '',
   rbCountry: '',
   rbLimit: 60,
@@ -128,6 +142,8 @@ const el = {
   count: $('count'),
   grid: $('grid'),
   emptyBox: $('emptyBox'),
+  emptyTitle: $('emptyTitle'),
+  emptyHint: $('emptyHint'),
   errorBox: $('errorBox'),
   errorMessage: $('errorMessage'),
   retry: $('retry'),
@@ -141,6 +157,7 @@ const el = {
     fallback: $('detailFallback'),
     rows: $('detailRows'),
     play: $('detailPlay'),
+    fav: $('detailFav'),
     copy: $('detailCopy'),
     homepage: $('detailHomepage'),
     close: $('detailClose'),
@@ -276,6 +293,75 @@ const saveCache = debounce(() => {
   }
 }, 400);
 
+/* -------------------------------------------- favorites --- */
+
+/** Restore saved stations from localStorage, keeping only well-formed entries. */
+function loadFavorites() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FAVORITES_KEY) ?? '[]');
+    state.favorites = Array.isArray(saved)
+      ? saved.filter((ch) => ch && typeof ch.id === 'string'
+          && (ch.source === 'somafm' || ch.source === 'radiobrowser'))
+      : [];
+  } catch {
+    state.favorites = [];   // corrupted storage — start clean
+  }
+}
+
+function saveFavorites() {
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(state.favorites));
+  } catch {
+    /* quota exceeded — favorites just won't persist */
+  }
+}
+
+const isFavorite = (id) => state.favorites.some((ch) => ch.id === id);
+
+/**
+ * Snapshot a channel so a favorite keeps working even before its source list is
+ * (re)loaded — it carries everything the card and player need: title, logo,
+ * stream / .pls map, codec, country…
+ */
+const favoriteSnapshot = (channel) => ({ ...channel });
+
+function toggleFavorite(id) {
+  const channel = byId(id);
+  if (!channel) return;
+  const wasFav = isFavorite(id);
+
+  if (wasFav) {
+    state.favorites = state.favorites.filter((ch) => ch.id !== id);
+  } else {
+    state.favorites.unshift(favoriteSnapshot(channel));
+  }
+  saveFavorites();
+  toast(wasFav ? 'Убрано из любимого' : 'Добавлено в любимое');
+
+  // On the favorites tab the list itself changed — repaint the whole thing.
+  if (state.source === 'favorites') {
+    render();
+    updatePlayButtons();
+    return;
+  }
+  // Elsewhere only the star that was clicked changes: keep focus and scroll.
+  const btn = el.grid.querySelector(`.card[data-id="${CSS.escape(id)}"] .card__fav`);
+  if (btn) paintFavButton(btn, !wasFav, channel.title);
+}
+
+function paintFavButton(btn, isFav, title) {
+  btn.setAttribute('aria-pressed', String(isFav));
+  btn.setAttribute('aria-label', `${isFav ? 'Убрать из любимого' : 'Добавить в любимое'}: ${title}`);
+  btn.setAttribute('title', isFav ? 'Убрать из любимого' : 'В любимое');
+}
+
+/** Sync the star inside the station dialog with the current favorite state. */
+function paintDetailFav(channel) {
+  const isFav = isFavorite(channel.id);
+  el.station.fav.setAttribute('aria-pressed', String(isFav));
+  el.station.fav.textContent = isFav ? 'В любимом' : 'В любимое';
+}
+
 /* --------------------------------------------- fetching --- */
 
 async function loadChannels() {
@@ -348,7 +434,27 @@ function parseChannels(doc) {
 
 /* -------------------------------------- radio-browser.info --- */
 
-const currentList = () => (state.source === 'somafm' ? state.channels : state.rb.stations);
+const currentList = () => {
+  if (state.source === 'somafm') return state.channels;
+  if (state.source === 'favorites') return state.favorites;
+  return state.rb.stations;
+};
+
+/** The one stream quality used for a SomaFM channel, preferring the active one. */
+function kindForChannel(channel, preferred = state.kind) {
+  if (channel?.pls?.[preferred]) return preferred;
+  return KIND_ORDER.find((kind) => channel?.pls?.[kind]) ?? null;
+}
+
+/** Is a channel's stream already resolved (SomaFM) or direct (radio-browser)? */
+function streamReadyFor(channel) {
+  if (channel.source === 'radiobrowser') return Boolean(channel.stream);
+  const kind = kindForChannel(channel);
+  return Boolean(kind && state.streams.has(streamKey(kind, channel.pls[kind])));
+}
+
+/** Views that may contain SomaFM channels and therefore need .pls resolution. */
+const viewResolvesStreams = () => state.source === 'somafm' || state.source === 'favorites';
 
 /** Signature of the active radio-browser request — used to skip redundant reloads. */
 const rbKey = () =>
@@ -605,6 +711,7 @@ function fillSelect(select, options, selected = '') {
 
 function reloadCurrent() {
   if (state.source === 'radiobrowser') void loadRb();
+  else if (state.source === 'favorites') { render(); resolveAll(state.favorites); }
   else void loadChannels();
 }
 
@@ -622,10 +729,10 @@ async function resolvePls(plsUrl) {
 }
 
 /** Resolve every .pls of the current quality with a small worker pool. */
-function resolveAll() {
+function resolveAll(list = state.channels) {
   const generation = ++state.resolve.generation;
   const kind = state.kind;
-  const targets = state.channels.filter((ch) => ch.pls[kind]);
+  const targets = list.filter((ch) => ch.pls && ch.pls[kind]);
   const pending = targets.filter((ch) => !state.streams.has(streamKey(kind, ch.pls[kind])));
 
   state.resolve.done = targets.length - pending.length;
@@ -669,7 +776,7 @@ function paintResolveProgress() {
   const { done, total } = state.resolve;
   // The status line describes the active view — a background SomaFM resolve
   // must not clobber it once the user has switched to another source.
-  if (state.resolve.active && state.source === 'somafm') {
+  if (state.resolve.active && viewResolvesStreams()) {
     setStatus(`Резолв потоков ${done}/${total}…`, 'is-busy');
   }
   updateStreamStat();
@@ -704,12 +811,12 @@ const byListeners = (a, b) => b.listeners - a.listeners || a.title.localeCompare
 
 function visibleChannels() {
   let list = currentList();
+  const query = state.query.trim().toLowerCase();
 
   // SomaFM is filtered and scoped locally; radio-browser results already
   // come back filtered (query / tag / country) and ordered from the API.
   if (state.source === 'somafm') {
     list = list.filter((ch) => ch.pls[state.kind]);
-    const query = state.query.trim().toLowerCase();
     if (query) {
       list = list.filter((ch) =>
         `${ch.title} ${ch.genre} ${ch.description}`.toLowerCase().includes(query));
@@ -720,6 +827,12 @@ function visibleChannels() {
     if (state.limit > 0) {
       list = [...list].sort(byListeners).slice(0, state.limit);
     }
+  } else if (state.source === 'favorites') {
+    // favorites mix both sources, so only the free-text search applies here
+    if (query) {
+      list = list.filter((ch) =>
+        `${ch.title} ${ch.genre} ${ch.description}`.toLowerCase().includes(query));
+    }
   }
 
   const { key, dir } = state.sort;
@@ -728,17 +841,32 @@ function visibleChannels() {
   return [...list].sort((a, b) => sign * cmp(a, b));
 }
 
+/** Label of the "quality" stat — the active source's own flavour. */
+const qualityStatText = () => {
+  if (state.source === 'somafm') return KINDS[state.kind].short;
+  if (state.source === 'favorites') return 'микс';
+  return 'онлайн';
+};
+
 function render() {
   const list = visibleChannels();
   const total = currentList().length;
   el.grid.innerHTML = list.map((channel, index) => cardHtml(channel, index)).join('');
   armLogos(el.grid);
-  el.emptyBox.hidden = !(list.length === 0 && !state.loading && !state.error);
+  const isEmpty = list.length === 0 && !state.loading && !state.error;
+  el.emptyBox.hidden = !isEmpty;
+  if (isEmpty) {
+    const favEmpty = state.source === 'favorites' && !state.query.trim();
+    el.emptyTitle.textContent = favEmpty ? 'В любимом пока пусто.' : 'Ничего не найдено.';
+    el.emptyHint.textContent = favEmpty
+      ? 'Отмечайте станции звёздочкой — они появятся здесь.'
+      : 'Измените запрос или сбросьте фильтры.';
+  }
   el.count.textContent = state.loading
     ? 'загрузка…'
     : `${list.length} из ${total}`;
   el.stats.channels.textContent = String(total || '—');
-  el.stats.quality.textContent = state.source === 'somafm' ? KINDS[state.kind].short : 'онлайн';
+  el.stats.quality.textContent = qualityStatText();
   updateStreamStat();
   updateButtons(list.length);
   syncStatus();
@@ -774,6 +902,7 @@ function setSort(key) {
 function readyStatusText() {
   const count = visibleChannels().length;
   if (state.source === 'radiobrowser') return `${count} ${stationsWord(count)} · радио готово`;
+  if (state.source === 'favorites') return `${count} ${stationsWord(count)} · любимое готово`;
   return `${count} ${stationsWord(count)} · ${KINDS[state.kind].short} готов`;
 }
 
@@ -782,7 +911,7 @@ function readyStatusText() {
  * Busy/loading/error texts are owned by their own code paths and left untouched.
  */
 function syncStatus() {
-  const resolving = state.source === 'somafm' && state.resolve.active;
+  const resolving = viewResolvesStreams() && state.resolve.active;
   if (state.loading || state.error || resolving) return;
   setStatus(readyStatusText(), 'is-ok');
 }
@@ -830,6 +959,14 @@ function selectSource(source) {
     return;
   }
 
+  if (source === 'favorites') {
+    state.loading = false;
+    render();
+    updateButtons();
+    resolveAll(state.favorites);   // fill in any SomaFM favorites' streams
+    return;
+  }
+
   // radio-browser results are already there and still match the filters
   if (state.rb.stations.length && state.rb.key === rbKey()) {
     state.loading = false;
@@ -844,6 +981,7 @@ function cardHtml(ch, index) {
   const meta = SOURCES[ch.source] ?? SOURCES.somafm;
   const isCurrent = state.currentId === ch.id;
   const isLive = isCurrent && state.playing;
+  const isFav = isFavorite(ch.id);
   const logo = ch.image
     ? `<img class="card__logo" data-logo src="${esc(ch.image)}" alt="" width="34" height="34" loading="lazy" data-letter="${esc(ch.title.slice(0, 1))}">`
     : `<span class="card__initial" aria-hidden="true">${esc(ch.title.slice(0, 1))}</span>`;
@@ -856,9 +994,13 @@ function cardHtml(ch, index) {
        </button>`
     : '';
 
+  const fav = `<button type="button" class="card__fav" data-fav aria-pressed="${isFav}" aria-label="${isFav ? 'Убрать из любимого' : 'Добавить в любимое'}: ${esc(ch.title)}" title="${isFav ? 'Убрать из любимого' : 'В любимое'}">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l1.9 3.85 4.25.62-3.07 3 .72 4.23L8 11.3l-3.8 2 .72-4.23-3.07-3 4.25-.62z"/></svg>
+    </button>`;
+
   return `
     <div class="card${isCurrent ? ' is-playing' : ''}${isLive ? ' is-live' : ''}" data-id="${esc(ch.id)}">
-      ${info}
+      <div class="card__actions">${fav}${info}</div>
       <div class="card__main" tabindex="0" role="button" aria-pressed="${isLive}" aria-label="${isLive ? 'Пауза' : 'Слушать'} ${esc(ch.title)}">
         <span class="card__num" aria-hidden="true">${String(index + 1).padStart(2, '0')}</span>
         <div class="card__name">
@@ -959,6 +1101,7 @@ function openStationDetails(id) {
     el.station.homepage.hidden = true;
   }
 
+  paintDetailFav(channel);
   el.station.dialog.showModal();
 }
 
@@ -967,7 +1110,7 @@ function closeStationDetails() {
 }
 
 function updateButtons(listLength = visibleChannels().length) {
-  const resolving = state.source === 'somafm' && state.resolve.active;
+  const resolving = viewResolvesStreams() && state.resolve.active;
   // direct stream URLs are the whole point — wait until the .pls round-trip is done
   const ready = !state.loading && !state.error && !resolving && listLength > 0;
   el.download.disabled = !ready;
@@ -985,6 +1128,12 @@ function updateStreamStat() {
     el.stats.streams.textContent = String(state.rb.stations.length || '—');
     return;
   }
+  if (state.source === 'favorites') {
+    const total = state.favorites.length;
+    const ready = state.favorites.filter(streamReadyFor).length;
+    el.stats.streams.textContent = total ? `${ready}/${total}` : '—';
+    return;
+  }
   const total = state.channels.filter((ch) => ch.pls[state.kind]).length;
   const ready = state.channels.filter(
     (ch) => ch.pls[state.kind] && state.streams.has(streamKey(state.kind, ch.pls[state.kind])),
@@ -1000,7 +1149,7 @@ function setStatus(text, modifier) {
 
 const updateStats = () => {
   el.stats.channels.textContent = String(currentList().length || '—');
-  el.stats.quality.textContent = state.source === 'somafm' ? KINDS[state.kind].short : 'онлайн';
+  el.stats.quality.textContent = qualityStatText();
   updateStreamStat();
 };
 
@@ -1009,6 +1158,7 @@ const updateStats = () => {
 const byId = (id) =>
   state.channels.find((ch) => ch.id === id)
   ?? state.rb.stations.find((ch) => ch.id === id)
+  ?? state.favorites.find((ch) => ch.id === id)
   ?? null;
 
 async function ensureStream(channel) {
@@ -1331,7 +1481,9 @@ function buildPlaylist(list) {
   });
   const summary = state.source === 'somafm'
     ? `# Soma FM playlist: ${list.length} channels, ${kind.key} (${kind.label})`
-    : `# Guilliman's Radio playlist: ${list.length} stations`;
+    : state.source === 'favorites'
+      ? `# Guilliman's Radio favorites: ${list.length} stations`
+      : `# Guilliman's Radio playlist: ${list.length} stations`;
   const lines = [
     '#EXTM3U',
     summary,
@@ -1342,8 +1494,9 @@ function buildPlaylist(list) {
     if (channel.source === 'radiobrowser') {
       lines.push(channel.stream);
     } else {
-      const stream = state.streams.get(streamKey(kindKey, channel.pls[kindKey]));
-      lines.push(stream ?? channel.pls[kindKey]);
+      const kind = kindForChannel(channel, kindKey);
+      const stream = kind ? state.streams.get(streamKey(kind, channel.pls[kind])) : null;
+      lines.push(stream ?? (kind ? channel.pls[kind] : ''));
     }
   }
   return `${lines.join('\n')}\n`;
@@ -1458,6 +1611,12 @@ function bindEvents() {
   });
 
   el.grid.addEventListener('click', (event) => {
+    const fav = event.target.closest('.card__fav');
+    if (fav) {
+      const card = fav.closest('.card');
+      if (card?.dataset.id) toggleFavorite(card.dataset.id);
+      return;
+    }
     const info = event.target.closest('.card__info');
     if (info) {
       const card = info.closest('.card');
@@ -1474,8 +1633,8 @@ function bindEvents() {
   });
 
   el.grid.addEventListener('keydown', (event) => {
-    // the info button keeps its own Enter/Space behaviour
-    if (event.target.closest('.card__info')) return;
+    // the info / favorite buttons keep their own Enter/Space behaviour
+    if (event.target.closest('.card__info') || event.target.closest('.card__fav')) return;
     if (event.key !== 'Enter' && event.key !== ' ') return;
     const card = event.target.closest('.card');
     if (!card || !card.dataset.id) return;
@@ -1504,6 +1663,12 @@ function bindEvents() {
     const id = stationDetailsId;
     closeStationDetails();
     if (id) void playChannel(id);
+  });
+  el.station.fav.addEventListener('click', () => {
+    if (!stationDetailsId) return;
+    toggleFavorite(stationDetailsId);
+    const channel = byId(stationDetailsId);
+    if (channel) paintDetailFav(channel);
   });
   el.station.copy.addEventListener('click', () => {
     if (!stationDetailsId) return;
@@ -1611,12 +1776,20 @@ function init() {
   syncMuteUi();
 
   loadCache();
+  loadFavorites();
   bindEvents();
   applySourceChrome();
   updateStats();
 
-  if (state.source === 'radiobrowser') void loadRb();
-  else void loadChannels();
+  if (state.source === 'radiobrowser') {
+    void loadRb();
+  } else if (state.source === 'favorites') {
+    state.loading = false;
+    render();
+    resolveAll(state.favorites);
+  } else {
+    void loadChannels();
+  }
 }
 
 if (document.readyState === 'loading') {

@@ -59,6 +59,10 @@
       <input type="radio" name="source" value="radiobrowser">
       <span class="source__name">Всё радио</span>
     </label>
+    <label class="source">
+      <input type="radio" name="source" value="favorites">
+      <span class="source__name">Любимое</span>
+    </label>
   </fieldset>
 
   <section class="ctl" aria-label="Генератор плейлиста">
@@ -153,8 +157,8 @@
   </div>
 
   <div class="notice" id="emptyBox" hidden>
-    <b>Ничего не найдено.</b>
-    <span>Измените запрос или сбросьте фильтры.</span>
+    <b id="emptyTitle">Ничего не найдено.</b>
+    <span id="emptyHint">Измените запрос или сбросьте фильтры.</span>
   </div>
 </main>
 
@@ -219,6 +223,7 @@
   <dl class="station-detail__rows" id="detailRows"></dl>
   <div class="station-detail__actions">
     <button type="button" class="btn btn--primary" id="detailPlay">Слушать</button>
+    <button type="button" class="btn btn--ghost" id="detailFav" aria-pressed="false">В любимое</button>
     <button type="button" class="btn btn--ghost" id="detailCopy">Копировать ссылку на поток</button>
     <a class="btn btn--ghost" id="detailHomepage" rel="noopener" target="_blank" hidden>Сайт станции</a>
   </div>
