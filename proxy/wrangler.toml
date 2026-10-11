@@ -2,7 +2,7 @@ name = "radio-browser-proxy"
 main = "worker.js"
 compatibility_date = "2024-11-01"
 
-# Optional: restrict who may call the proxy (comma-separated origins).
-# Unset → "*" (any origin). Example:
+# The worker only serves the site's own origins (see DEFAULT_ALLOWED_ORIGINS in
+# worker.js). Set ALLOWED_ORIGINS to replace that list (comma-separated):
 # [vars]
-# ALLOWED_ORIGINS = "https://soma.guilliman.ru"
+# ALLOWED_ORIGINS = "https://soma.guilliman.ru,https://hermanguilliman.github.io"

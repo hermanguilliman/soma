@@ -30,13 +30,26 @@ const NOW_PLAYING_INTERVAL = 20_000;
 
 /* --------------------------------------- radio-browser.info --- */
 
-// Public, key-less, CORS-enabled catalogue of ~60k stations.
-// The "all." host resolves to the current live mirror (a single server in DE),
-// so on networks where radio-browser.info is blocked (e.g. Russia) the whole
-// API disappears. A user-supplied mirror / reverse proxy can be plugged in via
-// localStorage, the "?rb=" query parameter or the UI field (see proxy/worker.js).
-const RB_API_DEFAULT = 'https://all.api.radio-browser.info';
-const RB_API_KEY = 'soma.rb.api';
+// Official public catalogue endpoint — a single server in DE, reachable from
+// most networks but blocked on some (e.g. Russia). A bundled reverse proxy
+// (see proxy/worker.js) is tried first so the catalogue keeps working there;
+// requests fall back to the official server (and back again) when an endpoint
+// is unreachable. The user can point at a mirror/proxy of their own via the UI
+// field, the "?rb=" query parameter or localStorage.
+//
+// The built-in proxy host is stored base64-encoded so it is not trivially
+// greppable in the public source; it is locked to this site's origin server-side.
+const RB_API_OFFICIAL = 'https://all.api.radio-browser.info';
+const RB_API_PROXY = (() => {
+  try {
+    return atob('aHR0cHM6Ly9yYWRpby1icm93c2VyLXByb3h5LmdlbnRsZW1hbnRsZW1hbi53b3JrZXJzLmRldg==');
+  } catch {
+    return '';                        // no atob (unlikely) — official server only
+  }
+})();
+// Built-in endpoints, in priority order; a user override is prepended in rbApiBases().
+const RB_API_BUILTIN = [RB_API_PROXY, RB_API_OFFICIAL].filter(Boolean);
+const RB_API_KEY = 'soma.rb.api';     // optional user-supplied mirror / proxy
 const RB_FACET_LIMIT = 80;               // entries offered by the tag / country pickers
 const RB_FACET_KEY = 'soma.rb.facets.v1';
 const RB_FACET_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -318,50 +331,64 @@ function normalizeApiBase(value) {
   return withScheme.replace(/\/+$/, '');
 }
 
-/** API bases to try, in order: ?rb= override → saved mirror → official server. */
+/** Explicit user override (?rb= or saved), or '' when the built-in chain is used. */
+function savedApiBase() {
+  try {
+    const fromQuery = normalizeApiBase(new URLSearchParams(location.search).get('rb'));
+    if (fromQuery) return fromQuery;
+  } catch { /* malformed query — ignore */ }
+
+  try {
+    return normalizeApiBase(localStorage.getItem(RB_API_KEY));
+  } catch {
+    return '';                        // storage disabled — ignore
+  }
+}
+
+/** API bases to try, in order: user override → built-in proxy → official server. */
 function rbApiBases() {
   const bases = [];
+  const override = savedApiBase();
+  if (override) bases.push(override);
 
-  let fromQuery = '';
-  try {
-    fromQuery = normalizeApiBase(new URLSearchParams(location.search).get('rb'));
-  } catch { /* malformed query — ignore */ }
-  if (fromQuery) bases.push(fromQuery);
-
-  let stored = '';
-  try {
-    stored = normalizeApiBase(localStorage.getItem(RB_API_KEY));
-  } catch { /* storage disabled — ignore */ }
-  if (stored && !bases.includes(stored)) bases.push(stored);
-
-  if (!bases.includes(RB_API_DEFAULT)) bases.push(RB_API_DEFAULT);
+  for (const base of RB_API_BUILTIN) {
+    if (!bases.includes(base)) bases.push(base);
+  }
   return bases;
 }
 
-/** Configured (non-default) base, or '' when the official server is used. */
-function configuredApiBase() {
-  const [first] = rbApiBases();
-  return first === RB_API_DEFAULT ? '' : first;
-}
-
 /**
- * Fetch a radio-browser JSON path. Tries every known base in turn and remembers
- * the one that answered, so a dead/blocked endpoint falls back automatically.
+ * Fetch and parse a radio-browser JSON path. Tries every known base in turn
+ * (user override → built-in proxy → official server) and remembers the one that
+ * answered. A single timeout covers the whole request — headers *and* body — so
+ * a stalled response still falls through to the next endpoint instead of hanging.
  */
-async function rbFetch(path, options = {}) {
+async function rbFetchJson(path, options = {}) {
   const bases = state.rb.api
     ? [state.rb.api, ...rbApiBases().filter((base) => base !== state.rb.api)]
     : rbApiBases();
+  const timeout = options.timeout ?? 10_000;
   let lastError = null;
 
   for (const base of bases) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
     try {
-      const response = await fetchWithRetry(`${base}${path}`, {
-        retries: 1, accept: 'application/json', ...options,
+      const response = await fetch(`${base}${path}`, {
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
       });
-      state.rb.api = base;               // remember the winner for this session
-      return response;
+      if (!response.ok) {
+        const err = new Error(`HTTP ${response.status}`);
+        err.status = response.status;
+        throw err;
+      }
+      const data = await response.json();     // still inside the timeout window
+      clearTimeout(timer);
+      state.rb.api = base;                    // remember the winner for this session
+      return data;
     } catch (err) {
+      clearTimeout(timer);
       lastError = err;
     }
   }
@@ -373,13 +400,13 @@ async function rbFetch(path, options = {}) {
 /** Turn a radio-browser failure into an actionable message. */
 function rbErrorMessage(err) {
   if (err?.name === 'AbortError') {
-    return 'Сервер не ответил вовремя. radio-browser.info может быть недоступен из вашей сети — '
-      + 'откройте «Адрес API» и укажите свой реверс-прокси.';
+    return 'Сервер не ответил вовремя. Ни встроенный прокси, ни официальный сервер '
+      + 'radio-browser не отвечают из вашей сети — откройте «Адрес API» и укажите своё зеркало или прокси.';
   }
   if (!err?.status) {
-    return 'Не удалось соединиться: radio-browser.info заблокирован или недоступен из вашей сети '
-      + '(в России он блокируется). Откройте «Адрес API» и укажите адрес своего реверс-прокси '
-      + '(см. proxy/worker.js).';
+    return 'Не удалось соединиться: встроенный прокси и официальный сервер radio-browser '
+      + 'недоступны из вашей сети (в России radio-browser.info блокируется). '
+      + 'Откройте «Адрес API» и укажите адрес своего реверс-прокси — например, Worker из proxy/worker.js.';
   }
   return String(err?.message ?? err);
 }
@@ -400,8 +427,7 @@ function rbSearchPath() {
 
 /** Commit the API field: persist the override, forget the cached winner, reload. */
 function applyApiBase() {
-  const value = normalizeApiBase(el.rbApiBase.value);
-  const custom = value && value !== RB_API_DEFAULT ? value : '';
+  const custom = normalizeApiBase(el.rbApiBase.value);
 
   try {
     if (custom) localStorage.setItem(RB_API_KEY, custom);
@@ -419,7 +445,7 @@ function applyApiBase() {
 
   el.rbApiBase.value = custom;
   state.rb.api = '';                  // forget the previous winner
-  toast(custom ? `Адрес API: ${custom}` : 'Источник: официальный сервер radio-browser.info');
+  toast(custom ? `Адрес API: ${custom}` : 'Источник: встроенный прокси radio-browser');
 
   if (state.source === 'radiobrowser') void loadRb();
 }
@@ -467,9 +493,7 @@ async function loadRb() {
     } catch {
       /* pickers stay empty — search still works without them */
     }
-
-    const response = await rbFetch(rbSearchPath(), { timeout: 20_000 });
-    const data = await response.json();
+    const data = await rbFetchJson(rbSearchPath(), { timeout: 12_000 });
     if (seq !== rbRequestSeq) return;        // a newer request superseded this one
     if (!Array.isArray(data)) throw new Error('radio-browser вернул неожиданный ответ');
     state.rb.stations = data.map(normalizeRb).filter((station) => station.stream);
@@ -508,10 +532,8 @@ async function loadRbFacets() {
   } catch { /* corrupted cache — refetch below */ }
 
   const [tags, countries] = await Promise.all([
-    rbFetch(`/json/tags?order=stationcount&reverse=true&limit=${RB_FACET_LIMIT}`)
-      .then((response) => response.json()),
-    rbFetch(`/json/countries?order=stationcount&reverse=true&limit=${RB_FACET_LIMIT}`)
-      .then((response) => response.json()),
+    rbFetchJson(`/json/tags?order=stationcount&reverse=true&limit=${RB_FACET_LIMIT}`),
+    rbFetchJson(`/json/countries?order=stationcount&reverse=true&limit=${RB_FACET_LIMIT}`),
   ]);
 
   const tagList = Array.isArray(tags) ? tags.map((tag) => tag.name).filter(Boolean) : [];
@@ -1359,7 +1381,7 @@ function init() {
   }
 
   state.rbLimit = Number.parseInt(el.rbLimit.value, 10) || 60;
-  el.rbApiBase.value = configuredApiBase();
+  el.rbApiBase.value = savedApiBase();
 
   const savedVolume = Number.parseFloat(localStorage.getItem(VOLUME_KEY) ?? '');
   const volume = Number.isFinite(savedVolume) ? Math.min(Math.max(savedVolume, 0), 1) : 0.8;

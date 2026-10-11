@@ -1,0 +1,11 @@
+# Cloudflare Wrangler local state (accounts, cache, build artifacts)
+proxy/.wrangler/
+.wrangler/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db

@@ -125,19 +125,19 @@
   </section>
 
   <details class="apibox" id="rbApiBox" hidden>
-    <summary class="apibox__summary">Адрес API radio-browser — зеркало или прокси</summary>
+    <summary class="apibox__summary">Адрес API radio-browser — по умолчанию встроенный прокси</summary>
     <div class="apibox__row">
       <label for="rbApiBase" class="visually-hidden">Адрес API radio-browser</label>
-      <input type="url" id="rbApiBase" placeholder="https://all.api.radio-browser.info"
+      <input type="url" id="rbApiBase" placeholder="https://ваш-прокси.example"
              spellcheck="false" autocomplete="off" inputmode="url">
       <button type="button" class="btn" id="rbApiSave">Применить</button>
       <button type="button" class="btn btn--ghost" id="rbApiReset">Сбросить</button>
     </div>
     <p class="apibox__hint">
-      По умолчанию используется официальный сервер <code>all.api.radio-browser.info</code>.
-      Если он недоступен из вашей сети (в России он блокируется), укажите адрес своего
-      реверс-прокси — например, Cloudflare Worker из <code>proxy/worker.js</code>.
-      Пустое поле возвращает официальный сервер. Настройка хранится только в этом браузере;
+      Каталог работает через встроенный прокси, поэтому радио доступно и там, где
+      <code>radio-browser.info</code> заблокирован (например, в России). При необходимости
+      укажите здесь своё зеркало или прокси — оно будет использоваться в первую очередь.
+      Пустое поле возвращает встроенный прокси. Настройка хранится только в этом браузере;
       адрес можно также задать параметром <code>?rb=…</code>.
     </p>
   </details>
