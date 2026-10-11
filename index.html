@@ -124,6 +124,24 @@
     </div>
   </section>
 
+  <details class="apibox" id="rbApiBox" hidden>
+    <summary class="apibox__summary">Адрес API radio-browser — зеркало или прокси</summary>
+    <div class="apibox__row">
+      <label for="rbApiBase" class="visually-hidden">Адрес API radio-browser</label>
+      <input type="url" id="rbApiBase" placeholder="https://all.api.radio-browser.info"
+             spellcheck="false" autocomplete="off" inputmode="url">
+      <button type="button" class="btn" id="rbApiSave">Применить</button>
+      <button type="button" class="btn btn--ghost" id="rbApiReset">Сбросить</button>
+    </div>
+    <p class="apibox__hint">
+      По умолчанию используется официальный сервер <code>all.api.radio-browser.info</code>.
+      Если он недоступен из вашей сети (в России он блокируется), укажите адрес своего
+      реверс-прокси — например, Cloudflare Worker из <code>proxy/worker.js</code>.
+      Пустое поле возвращает официальный сервер. Настройка хранится только в этом браузере;
+      адрес можно также задать параметром <code>?rb=…</code>.
+    </p>
+  </details>
+
   <section class="toolbar" aria-label="Поиск">
     <div class="search">
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m10.5 10.5 3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>

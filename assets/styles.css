@@ -416,6 +416,68 @@ select:focus-visible { border-color: var(--accent); outline: none; }
   gap: 8px;
 }
 
+/* collapsible API-endpoint override for blocked networks */
+
+.apibox {
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 12.5px;
+}
+
+.apibox__summary {
+  padding: 10px 14px;
+  color: var(--muted);
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+.apibox__summary::-webkit-details-marker { display: none; }
+.apibox__summary::before {
+  content: '⚙';
+  margin-right: 8px;
+  color: var(--dim);
+}
+.apibox[open] .apibox__summary {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+}
+
+.apibox__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 14px;
+}
+.apibox__row input {
+  flex: 1 1 280px;
+  min-width: 0;
+  height: var(--control-h);
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+}
+.apibox__row input:hover { border-color: var(--line-strong); }
+.apibox__row input:focus { outline: none; border-color: var(--accent); }
+
+.apibox__hint {
+  margin: 0;
+  padding: 0 14px 14px;
+  color: var(--dim);
+  line-height: 1.55;
+}
+.apibox__hint code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  font-size: .92em;
+}
+
 /* ------------------------------------------ station table --- */
 
 .stations { margin-top: 4px; }
