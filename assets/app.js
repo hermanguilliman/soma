@@ -48,6 +48,7 @@ const RB_API_PROXY = (() => {
 })();
 // Endpoints to try, in priority order (proxy first, official server as backup).
 const RB_API_BUILTIN = [RB_API_PROXY, RB_API_OFFICIAL].filter(Boolean);
+const RB_PAGE_SIZE = 100;                // stations per request — big replies stall on flaky links
 const RB_FACET_LIMIT = 80;               // entries offered by the tag / country pickers
 const RB_FACET_KEY = 'soma.rb.facets.v1';
 const RB_FACET_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -323,38 +324,48 @@ function rbApiBases() {
 }
 
 /**
- * Fetch and parse a radio-browser JSON path. Tries every known base in turn
- * (user override → built-in proxy → official server) and remembers the one that
- * answered. A single timeout covers the whole request — headers *and* body — so
- * a stalled response still falls through to the next endpoint instead of hanging.
+ * Fetch and parse a radio-browser JSON path. The primary endpoint is retried a
+ * few times because a flaky link often drops a request with no useful error —
+ * only a hang — and a fresh attempt usually goes through; the remaining
+ * endpoints are then tried once each as backups. A single timeout covers the
+ * whole request (headers *and* body), so a stalled reply fails over instead of
+ * hanging. The endpoint that answered is remembered for the session.
  */
 async function rbFetchJson(path, options = {}) {
   const bases = state.rb.api
     ? [state.rb.api, ...rbApiBases().filter((base) => base !== state.rb.api)]
     : rbApiBases();
   const timeout = options.timeout ?? 10_000;
+  const attempts = Math.max(1, options.attempts ?? 2);
   let lastError = null;
 
-  for (const base of bases) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-    try {
-      const response = await fetch(`${base}${path}`, {
-        signal: controller.signal,
-        headers: { Accept: 'application/json' },
-      });
-      if (!response.ok) {
-        const err = new Error(`HTTP ${response.status}`);
-        err.status = response.status;
-        throw err;
+  for (let i = 0; i < bases.length; i++) {
+    const base = bases[i];
+    const tries = i === 0 ? attempts : 1;   // retry the primary endpoint, fall back once elsewhere
+    for (let attempt = 0; attempt < tries; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      try {
+        const response = await fetch(`${base}${path}`, {
+          signal: controller.signal,
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok) {
+          const err = new Error(`HTTP ${response.status}`);
+          err.status = response.status;
+          throw err;
+        }
+        const data = await response.json();     // still inside the timeout window
+        clearTimeout(timer);
+        state.rb.api = base;                    // remember the winner for this session
+        return data;
+      } catch (err) {
+        clearTimeout(timer);
+        lastError = err;
+        // A client error (4xx) will not improve on retry — move on to the next base.
+        if (err.status >= 400 && err.status < 500) break;
+        if (attempt < tries - 1) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
       }
-      const data = await response.json();     // still inside the timeout window
-      clearTimeout(timer);
-      state.rb.api = base;                    // remember the winner for this session
-      return data;
-    } catch (err) {
-      clearTimeout(timer);
-      lastError = err;
     }
   }
 
@@ -373,9 +384,10 @@ function rbErrorMessage(err) {
   return String(err?.message ?? err);
 }
 
-function rbSearchPath() {
+function rbSearchPath(limit, offset = 0) {
   const params = new URLSearchParams({
-    limit: String(state.rbLimit),
+    limit: String(limit),
+    offset: String(offset),
     hidebroken: 'true',        // only stations that passed their last health check
     order: 'votes',
     reverse: 'true',
@@ -385,6 +397,44 @@ function rbSearchPath() {
   if (state.rbTag) params.set('tag', state.rbTag);
   if (state.rbCountry) params.set('countrycode', state.rbCountry);
   return `/json/stations/search?${params.toString()}`;
+}
+
+/**
+ * Load up to state.rbLimit stations, paging through the catalogue. A single
+ * 200-station reply is by far the most likely to stall, so large requests are
+ * split into RB_PAGE_SIZE chunks that survive the link and can be retried on
+ * their own. `onPage` fires after each page so the list fills in progressively;
+ * if a later page never arrives we keep the pages already fetched instead of
+ * throwing the whole list away.
+ */
+async function rbFetchStations(onPage) {
+  const total = state.rbLimit;
+  const seen = new Set();
+  const stations = [];
+
+  for (let offset = 0; offset < total; offset += RB_PAGE_SIZE) {
+    const limit = Math.min(RB_PAGE_SIZE, total - offset);
+    let page;
+    try {
+      page = await rbFetchJson(rbSearchPath(limit, offset), { timeout: 9_000, attempts: 3 });
+    } catch (err) {
+      if (stations.length) break;   // keep the partial top list rather than show nothing
+      throw err;
+    }
+    if (!Array.isArray(page)) throw new Error('Каталог вернул неожиданный ответ');
+    for (const station of page) {
+      const uuid = station.stationuuid;
+      if (uuid) {
+        if (seen.has(uuid)) continue;   // pages can overlap while votes shift
+        seen.add(uuid);
+      }
+      stations.push(station);
+    }
+    if (onPage) onPage(stations.slice(0, total));
+    if (page.length < limit) break;   // catalogue exhausted
+  }
+
+  return stations.slice(0, total);
 }
 
 /** Map a radio-browser station onto the shared channel shape used by the UI. */
@@ -430,9 +480,12 @@ async function loadRb() {
     } catch {
       /* pickers stay empty — search still works without them */
     }
-    const data = await rbFetchJson(rbSearchPath(), { timeout: 12_000 });
+    const data = await rbFetchStations((partial) => {
+      if (seq !== rbRequestSeq) return;      // a newer request superseded this one
+      state.rb.stations = partial.map(normalizeRb).filter((station) => station.stream);
+      render();
+    });
     if (seq !== rbRequestSeq) return;        // a newer request superseded this one
-    if (!Array.isArray(data)) throw new Error('Каталог вернул неожиданный ответ');
     state.rb.stations = data.map(normalizeRb).filter((station) => station.stream);
     state.rb.key = key;
   } catch (err) {

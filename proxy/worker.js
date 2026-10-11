@@ -28,7 +28,9 @@
 
 const UPSTREAM = 'https://all.api.radio-browser.info';
 const ALLOWED_PREFIX = '/json/';
-const CACHE_TTL = 300; // seconds
+const CACHE_TTL = 300; // seconds — how long Cloudflare keeps a reply in front of upstream
+const UPSTREAM_TIMEOUT = 6000; // ms — abandon a stalled upstream request and try again
+const UPSTREAM_ATTEMPTS = 3; // transient radio-browser hiccups are common for large replies
 const CONTACT = 'https://soma.guilliman.ru';
 
 // Browsers always send Origin (and/or Referer) on cross-origin requests; only
@@ -66,30 +68,58 @@ export default {
 
     let upstream;
     try {
-      upstream = await fetch(target, {
+      upstream = await fetchUpstream(target);
+    } catch {
+      // Upstream never answered in time — tell the client to retry now rather
+      // than letting the connection hang until the browser's own timeout.
+      return json({ error: 'upstream unavailable' }, 504, caller);
+    }
+
+    const headers = new Headers(corsHeaders(caller));
+    headers.set('Content-Type', upstream.headers.get('Content-Type') || 'application/json');
+    // Let the browser serve a stale copy while it revalidates in the background,
+    // so a flaky link does not make the list disappear.
+    headers.set('Cache-Control', `public, max-age=${CACHE_TTL}, stale-while-revalidate=86400`);
+    headers.set('X-Proxy', 'radio-browser');
+
+    // Buffer the body rather than streaming it: the payloads are small and a
+    // buffered reply gets a Content-Length, avoiding chunked-transfer stalls.
+    const body = await upstream.arrayBuffer();
+    return new Response(body, { status: upstream.status, headers });
+  },
+};
+
+/**
+ * Fetch the upstream API, retrying a timeout or a transient failure a few
+ * times. A single hung request used to hold the whole reply open; each attempt
+ * is capped at UPSTREAM_TIMEOUT so the worst case stays close to the client's
+ * own timeout instead of Cloudflare's much longer limit.
+ */
+async function fetchUpstream(target) {
+  let lastError;
+  for (let attempt = 0; attempt < UPSTREAM_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT);
+    try {
+      const response = await fetch(target, {
         headers: {
           Accept: 'application/json',
           // radio-browser asks clients to identify themselves.
           'User-Agent': `soma-guilliman-proxy/1.0 (+${CONTACT})`,
         },
+        signal: controller.signal,
         // Cheap, volatile data — let Cloudflare absorb the traffic.
         cf: { cacheTtl: CACHE_TTL, cacheEverything: true },
       });
-    } catch {
-      return json({ error: 'upstream unavailable' }, 502, caller);
+      clearTimeout(timer);
+      return response;
+    } catch (error) {
+      clearTimeout(timer);
+      lastError = error;
     }
-
-    const headers = new Headers(corsHeaders(caller));
-    headers.set('Content-Type', upstream.headers.get('Content-Type') || 'application/json');
-    headers.set('Cache-Control', `public, max-age=${CACHE_TTL}`);
-    headers.set('X-Proxy', 'radio-browser');
-
-    // Buffer the body rather than streaming it: the payloads are small and a
-    // buffered reply avoids any chunked-transfer edge cases through the browser.
-    const body = await upstream.arrayBuffer();
-    return new Response(body, { status: upstream.status, headers });
-  },
-};
+  }
+  throw lastError ?? new Error('upstream unavailable');
+}
 
 function allowedOrigins(env) {
   const raw = String(env?.ALLOWED_ORIGINS ?? '').trim();
