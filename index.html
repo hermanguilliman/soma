@@ -5,22 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0b0b0d">
-<title>SomaFM — актуальный плейлист радиостанций</title>
-<meta name="description" content="Соберите актуальный M3U8-плейлист всех 46 радиостанций SomaFM или десятков тысяч станций со всего мира из открытого каталога radio-browser.info прямо в браузере: выбор качества (MP3 128, AAC 130, AAC+ 64), фильтры по жанру и стране, прямые ссылки на потоки и встроенный плеер.">
+<title>Guilliman's Radio — актуальный плейлист радиостанций</title>
+<meta name="description" content="Соберите актуальный M3U8-плейлист из 46 станций SomaFM или десятков тысяч станций со всего мира прямо в браузере: выбор качества (MP3 128, AAC 130, AAC+ 64), фильтры по жанру и стране, прямые ссылки на потоки и встроенный плеер.">
 <meta name="yandex-verification" content="51133ed144e8f7d1" />
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="SomaFM · плейлист радиостанций">
+<meta property="og:site_name" content="Guilliman's Radio">
 <meta property="og:locale" content="ru_RU">
-<meta property="og:title" content="SomaFM — актуальный плейлист радиостанций">
-<meta property="og:description" content="Генератор M3U8-плейлиста: 46 станций SomaFM (три качества потока) и десятки тысяч станций мира из radio-browser.info — прямые ссылки, фильтры и встроенный плеер.">
+<meta property="og:title" content="Guilliman's Radio — актуальный плейлист радиостанций">
+<meta property="og:description" content="Генератор M3U8-плейлиста: 46 станций SomaFM (три качества потока) и десятки тысяч станций мира — прямые ссылки, фильтры и встроенный плеер.">
 <meta property="og:url" content="https://soma.guilliman.ru/">
 <meta property="og:image" content="https://soma.guilliman.ru/assets/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="SomaFM — актуальный плейлист радиостанций в формате M3U8">
+<meta property="og:image:alt" content="Guilliman's Radio — актуальный плейлист радиостанций в формате M3U8">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="SomaFM — актуальный плейлист радиостанций">
-<meta name="twitter:description" content="Генератор M3U8-плейлиста: 46 станций SomaFM (три качества потока) и десятки тысяч станций мира из radio-browser.info — прямые ссылки, фильтры и встроенный плеер.">
+<meta name="twitter:title" content="Guilliman's Radio — актуальный плейлист радиостанций">
+<meta name="twitter:description" content="Генератор M3U8-плейлиста: 46 станций SomaFM (три качества потока) и десятки тысяч станций мира — прямые ссылки, фильтры и встроенный плеер.">
 <meta name="twitter:image" content="https://soma.guilliman.ru/assets/og-image.png">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -33,12 +33,8 @@
 <header class="topbar">
   <a class="brand" href="./">
     <span class="brand__eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-    <span class="brand__name">Soma<span class="brand__name-acc">FM</span></span>
+    <span class="brand__name">Guilliman's <span class="brand__name-acc">Radio</span></span>
   </a>
-  <nav class="topnav">
-    <a href="https://somafm.com" target="_blank" rel="noopener noreferrer">SomaFM ↗</a>
-    <a href="https://github.com/hermanguilliman/Soma-FM-Playlist-Builder" target="_blank" rel="noopener noreferrer">CLI-версия ↗</a>
-  </nav>
 </header>
 
 <main>
@@ -58,12 +54,10 @@
     <label class="source">
       <input type="radio" name="source" value="somafm" checked>
       <span class="source__name">SomaFM</span>
-      <span class="source__hint">somafm.com</span>
     </label>
     <label class="source">
       <input type="radio" name="source" value="radiobrowser">
       <span class="source__name">Всё радио</span>
-      <span class="source__hint">radio-browser.info</span>
     </label>
   </fieldset>
 
@@ -124,24 +118,6 @@
     </div>
   </section>
 
-  <details class="apibox" id="rbApiBox" hidden>
-    <summary class="apibox__summary">Адрес API radio-browser — по умолчанию встроенный прокси</summary>
-    <div class="apibox__row">
-      <label for="rbApiBase" class="visually-hidden">Адрес API radio-browser</label>
-      <input type="url" id="rbApiBase" placeholder="https://ваш-прокси.example"
-             spellcheck="false" autocomplete="off" inputmode="url">
-      <button type="button" class="btn" id="rbApiSave">Применить</button>
-      <button type="button" class="btn btn--ghost" id="rbApiReset">Сбросить</button>
-    </div>
-    <p class="apibox__hint">
-      Каталог работает через встроенный прокси, поэтому радио доступно и там, где
-      <code>radio-browser.info</code> заблокирован (например, в России). При необходимости
-      укажите здесь своё зеркало или прокси — оно будет использоваться в первую очередь.
-      Пустое поле возвращает встроенный прокси. Настройка хранится только в этом браузере;
-      адрес можно также задать параметром <code>?rb=…</code>.
-    </p>
-  </details>
-
   <section class="toolbar" aria-label="Поиск">
     <div class="search">
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m10.5 10.5 3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
@@ -183,11 +159,8 @@
 
 <footer class="footer">
   <p>
-    Плейлист собирается в браузере из открытых API
-    <a href="https://somafm.com" target="_blank" rel="noopener noreferrer">SomaFM</a>
-    и каталога
-    <a href="https://www.radio-browser.info" target="_blank" rel="noopener noreferrer">radio-browser.info</a>
-    — станции и ссылки всегда актуальны.
+    Плейлист собирается в браузере из открытых источников —
+    станции и ссылки всегда актуальны.
   </p>
   <p>© 2026 Herman Guilliman</p>
 </footer>
@@ -198,7 +171,7 @@
     <span class="player__fallback" id="playerFallback" aria-hidden="true">◉</span>
     <div class="player__text">
       <b id="playerTitle">Выберите станцию</b>
-      <span id="playerNow" aria-live="polite">SomaFM · прямой эфир</span>
+      <span id="playerNow" aria-live="polite">Прямой эфир</span>
     </div>
     <span class="player__eq" id="playerEq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
   </div>

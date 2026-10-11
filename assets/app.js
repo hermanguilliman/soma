@@ -1,10 +1,10 @@
 /* ============================================================
-   soma.guilliman.ru — client-side SomaFM playlist builder.
-   Mirrors build_playlist.py:
-     1. fetch channels.xml
-     2. pick stream quality (mp3 / aac / aacp)
-     3. resolve every .pls into a direct stream URL
-     4. render an M3U8 playlist (BOM + EXTINF)
+   Guilliman's Radio (soma.guilliman.ru) — client-side playlist builder.
+   Sources:
+     1. SomaFM — fetch channels.xml, pick stream quality (mp3 / aac / aacp),
+        resolve every .pls into a direct stream URL.
+     2. Всё радио — query the world radio catalogue for ready-made streams.
+   Renders an M3U8 playlist (BOM + EXTINF).
    ============================================================ */
 
 'use strict';
@@ -34,8 +34,7 @@ const NOW_PLAYING_INTERVAL = 20_000;
 // most networks but blocked on some (e.g. Russia). A bundled reverse proxy
 // (see proxy/worker.js) is tried first so the catalogue keeps working there;
 // requests fall back to the official server (and back again) when an endpoint
-// is unreachable. The user can point at a mirror/proxy of their own via the UI
-// field, the "?rb=" query parameter or localStorage.
+// is unreachable.
 //
 // The built-in proxy host is stored base64-encoded so it is not trivially
 // greppable in the public source; it is locked to this site's origin server-side.
@@ -47,9 +46,8 @@ const RB_API_PROXY = (() => {
     return '';                        // no atob (unlikely) — official server only
   }
 })();
-// Built-in endpoints, in priority order; a user override is prepended in rbApiBases().
+// Endpoints to try, in priority order (proxy first, official server as backup).
 const RB_API_BUILTIN = [RB_API_PROXY, RB_API_OFFICIAL].filter(Boolean);
-const RB_API_KEY = 'soma.rb.api';     // optional user-supplied mirror / proxy
 const RB_FACET_LIMIT = 80;               // entries offered by the tag / country pickers
 const RB_FACET_KEY = 'soma.rb.facets.v1';
 const RB_FACET_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -71,12 +69,12 @@ const SOURCES = {
   radiobrowser: {
     id: 'radiobrowser',
     label: 'Всё радио',
-    pageTitle: 'Мировое радио · radio-browser.info',
+    pageTitle: 'Всё радио',
     file: 'Radio.m3u8',
     searchPlaceholder: 'Поиск по названию станции…',
     nowPrefix: 'Страна',
     listenersTitle: 'голосов',
-    album: 'radio-browser.info (soma.guilliman.ru)',
+    album: "Guilliman's Radio (soma.guilliman.ru)",
     cols: { title: 'Станция', genre: 'Теги', now: 'Страна', listeners: 'Голоса' },
     sortLabels: { title: 'станции', genre: 'тегам', now: 'стране', listeners: 'голосам' },
   },
@@ -120,10 +118,6 @@ const el = {
   rbTag: $('rbTag'),
   rbCountry: $('rbCountry'),
   rbLimit: $('rbLimit'),
-  rbApiBox: $('rbApiBox'),
-  rbApiBase: $('rbApiBase'),
-  rbApiSave: $('rbApiSave'),
-  rbApiReset: $('rbApiReset'),
   download: $('download'),
   downloadLabel: $('downloadLabel'),
   copy: $('copy'),
@@ -323,38 +317,9 @@ const currentList = () => (state.source === 'somafm' ? state.channels : state.rb
 const rbKey = () =>
   `${state.query.trim().toLowerCase()}|${state.rbTag}|${state.rbCountry}|${state.rbLimit}`;
 
-/** Normalise a user-supplied API base: add a scheme if missing, drop trailing slashes. */
-function normalizeApiBase(value) {
-  const raw = String(value ?? '').trim();
-  if (!raw) return '';
-  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-  return withScheme.replace(/\/+$/, '');
-}
-
-/** Explicit user override (?rb= or saved), or '' when the built-in chain is used. */
-function savedApiBase() {
-  try {
-    const fromQuery = normalizeApiBase(new URLSearchParams(location.search).get('rb'));
-    if (fromQuery) return fromQuery;
-  } catch { /* malformed query — ignore */ }
-
-  try {
-    return normalizeApiBase(localStorage.getItem(RB_API_KEY));
-  } catch {
-    return '';                        // storage disabled — ignore
-  }
-}
-
-/** API bases to try, in order: user override → built-in proxy → official server. */
+/** API bases to try, in order: built-in proxy → official server. */
 function rbApiBases() {
-  const bases = [];
-  const override = savedApiBase();
-  if (override) bases.push(override);
-
-  for (const base of RB_API_BUILTIN) {
-    if (!bases.includes(base)) bases.push(base);
-  }
-  return bases;
+  return [...RB_API_BUILTIN];
 }
 
 /**
@@ -394,19 +359,16 @@ async function rbFetchJson(path, options = {}) {
   }
 
   state.rb.api = '';
-  throw lastError ?? new Error('radio-browser недоступен');
+  throw lastError ?? new Error('каталог радио недоступен');
 }
 
-/** Turn a radio-browser failure into an actionable message. */
+/** Turn a catalogue failure into an actionable message. */
 function rbErrorMessage(err) {
   if (err?.name === 'AbortError') {
-    return 'Сервер не ответил вовремя. Ни встроенный прокси, ни официальный сервер '
-      + 'radio-browser не отвечают из вашей сети — откройте «Адрес API» и укажите своё зеркало или прокси.';
+    return 'Сервер не ответил вовремя. Каталог радио временно недоступен — попробуйте позже.';
   }
   if (!err?.status) {
-    return 'Не удалось соединиться: встроенный прокси и официальный сервер radio-browser '
-      + 'недоступны из вашей сети (в России radio-browser.info блокируется). '
-      + 'Откройте «Адрес API» и укажите адрес своего реверс-прокси — например, Worker из proxy/worker.js.';
+    return 'Не удалось соединиться: каталог радио недоступен из вашей сети. Попробуйте позже.';
   }
   return String(err?.message ?? err);
 }
@@ -423,31 +385,6 @@ function rbSearchPath() {
   if (state.rbTag) params.set('tag', state.rbTag);
   if (state.rbCountry) params.set('countrycode', state.rbCountry);
   return `/json/stations/search?${params.toString()}`;
-}
-
-/** Commit the API field: persist the override, forget the cached winner, reload. */
-function applyApiBase() {
-  const custom = normalizeApiBase(el.rbApiBase.value);
-
-  try {
-    if (custom) localStorage.setItem(RB_API_KEY, custom);
-    else localStorage.removeItem(RB_API_KEY);
-  } catch { /* storage disabled — the field still applies for this session */ }
-
-  // A ?rb= parameter would shadow the field on the next reload — drop it once applied.
-  try {
-    const url = new URL(location.href);
-    if (url.searchParams.has('rb')) {
-      url.searchParams.delete('rb');
-      history.replaceState(null, '', url);
-    }
-  } catch { /* ignore */ }
-
-  el.rbApiBase.value = custom;
-  state.rb.api = '';                  // forget the previous winner
-  toast(custom ? `Адрес API: ${custom}` : 'Источник: встроенный прокси radio-browser');
-
-  if (state.source === 'radiobrowser') void loadRb();
 }
 
 /** Map a radio-browser station onto the shared channel shape used by the UI. */
@@ -495,7 +432,7 @@ async function loadRb() {
     }
     const data = await rbFetchJson(rbSearchPath(), { timeout: 12_000 });
     if (seq !== rbRequestSeq) return;        // a newer request superseded this one
-    if (!Array.isArray(data)) throw new Error('radio-browser вернул неожиданный ответ');
+    if (!Array.isArray(data)) throw new Error('Каталог вернул неожиданный ответ');
     state.rb.stations = data.map(normalizeRb).filter((station) => station.stream);
     state.rb.key = key;
   } catch (err) {
@@ -704,7 +641,7 @@ function render() {
     ? 'загрузка…'
     : `${list.length} из ${total}`;
   el.stats.channels.textContent = String(total || '—');
-  el.stats.quality.textContent = state.source === 'somafm' ? KINDS[state.kind].short : 'radio-browser';
+  el.stats.quality.textContent = state.source === 'somafm' ? KINDS[state.kind].short : 'онлайн';
   updateStreamStat();
   updateButtons(list.length);
   syncStatus();
@@ -763,7 +700,6 @@ function applySourceChrome() {
   el.somafmControls.hidden = state.source !== 'somafm';
   el.rbControls.hidden = state.source !== 'radiobrowser';
   el.rbFilters.hidden = state.source !== 'radiobrowser';
-  el.rbApiBox.hidden = state.source !== 'radiobrowser';
 
   const input = el.sources.querySelector(`input[value="${state.source}"]`);
   if (input) input.checked = true;
@@ -875,7 +811,7 @@ function setStatus(text, modifier) {
 
 const updateStats = () => {
   el.stats.channels.textContent = String(currentList().length || '—');
-  el.stats.quality.textContent = state.source === 'somafm' ? KINDS[state.kind].short : 'radio-browser';
+  el.stats.quality.textContent = state.source === 'somafm' ? KINDS[state.kind].short : 'онлайн';
   updateStreamStat();
 };
 
@@ -1079,7 +1015,7 @@ function refreshNowPlaying() {
   if (channel.source === 'radiobrowser') {
     setPlayerNow(channel.genre && channel.genre !== '—'
       ? `${channel.genre} · прямой эфир`
-      : 'radio-browser · прямой эфир');
+      : 'Прямой эфир');
     updateMediaSession(channel);
     return;
   }
@@ -1116,11 +1052,11 @@ function buildPlaylist(list) {
   });
   const summary = state.source === 'somafm'
     ? `# Soma FM playlist: ${list.length} channels, ${kind.key} (${kind.label})`
-    : `# radio-browser.info playlist: ${list.length} stations`;
+    : `# Guilliman's Radio playlist: ${list.length} stations`;
   const lines = [
     '#EXTM3U',
     summary,
-    `# Generated by soma.guilliman.ru on ${stamp}`,
+    `# Generated by Guilliman's Radio on ${stamp}`,
   ];
   for (const channel of list) {
     lines.push(`#EXTINF:-1,${cleanTitle(channel.title)}`);
@@ -1237,17 +1173,6 @@ function bindEvents() {
   el.rbLimit.addEventListener('change', () => {
     state.rbLimit = Number.parseInt(el.rbLimit.value, 10) || 60;
     void loadRb();
-  });
-
-  el.rbApiSave.addEventListener('click', applyApiBase);
-  el.rbApiReset.addEventListener('click', () => {
-    el.rbApiBase.value = '';
-    applyApiBase();
-  });
-  el.rbApiBase.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    applyApiBase();
   });
 
   el.tablehead.addEventListener('click', (event) => {
@@ -1381,7 +1306,6 @@ function init() {
   }
 
   state.rbLimit = Number.parseInt(el.rbLimit.value, 10) || 60;
-  el.rbApiBase.value = savedApiBase();
 
   const savedVolume = Number.parseFloat(localStorage.getItem(VOLUME_KEY) ?? '');
   const volume = Number.isFinite(savedVolume) ? Math.min(Math.max(savedVolume, 0), 1) : 0.8;
