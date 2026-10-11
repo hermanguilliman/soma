@@ -180,6 +180,40 @@ main, .topbar, .footer { position: relative; z-index: 1; }
   font-variant-numeric: tabular-nums;
 }
 
+/* ------------------------------------------- sources --- */
+
+.sources {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-inline-size: 0;
+  margin: 0 0 12px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.source {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background .18s var(--ease), color .18s var(--ease);
+}
+.source:hover { background: rgba(255, 255, 255, .05); color: var(--text); }
+.source:has(input:checked) { background: var(--accent); color: var(--accent-ink); }
+.source:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.source input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+.source__name { font-size: 13.5px; font-weight: 700; letter-spacing: -.01em; }
+.source__hint { font-size: 11px; font-weight: 600; color: var(--dim); }
+.source:has(input:checked) .source__hint { color: rgba(14, 21, 0, .62); }
+
 /* ------------------------------------------- generator --- */
 
 .ctl {
@@ -228,6 +262,14 @@ main, .topbar, .footer { position: relative; z-index: 1; }
 .kind__key { font-size: 13px; font-weight: 700; letter-spacing: -.01em; }
 .kind__hint { font-size: 11.5px; font-weight: 600; color: var(--muted); }
 .kind:has(input:checked) .kind__hint { color: rgba(14, 21, 0, .7); }
+
+.ctl__group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
 
 .ctl__field { display: flex; }
 
@@ -366,6 +408,12 @@ select:focus-visible { border-color: var(--accent); outline: none; }
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.rbonly {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 /* ------------------------------------------ station table --- */
@@ -915,6 +963,12 @@ body.is-playing .player__eq i:nth-child(4) { animation-delay: .54s; }
   .ctl { gap: 8px 10px; padding: 10px; }
   .kinds { width: 100%; }
   .kind { flex: 1; padding: 0 8px; }
+
+  /* source picker + radio-browser filters go full width */
+  .sources { display: flex; width: 100%; }
+  .source { flex: 1; justify-content: center; }
+  .rbonly { width: 100%; }
+  .rbonly select { flex: 1 1 0; min-width: 0; }
   .ctl__field,
   .ctl__field select { width: 100%; }
   .ctl__end { flex-direction: column; align-items: stretch; gap: 8px; }

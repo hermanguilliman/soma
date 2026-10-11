@@ -28,9 +28,47 @@ const VOLUME_KEY = 'soma.volume';
 const CONCURRENCY = 6;
 const NOW_PLAYING_INTERVAL = 20_000;
 
+/* --------------------------------------- radio-browser.info --- */
+
+// Public, key-less, CORS-enabled catalogue of ~60k stations.
+// The "all." host is DNS-round-robined to a random live mirror.
+const RB_API = 'https://all.api.radio-browser.info';
+const RB_FACET_LIMIT = 80;               // entries offered by the tag / country pickers
+const RB_FACET_KEY = 'soma.rb.facets.v1';
+const RB_FACET_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SOURCE_KEY = 'soma.source';
+
+const SOURCES = {
+  somafm: {
+    id: 'somafm',
+    label: 'SomaFM',
+    pageTitle: 'Актуальный плейлист SomaFM',
+    file: 'SomaFM.m3u8',
+    searchPlaceholder: 'Поиск: название, жанр, описание…',
+    nowPrefix: 'Играет',
+    listenersTitle: 'слушателей',
+    album: 'SomaFM (soma.guilliman.ru)',
+    cols: { title: 'Станция', genre: 'Жанр', now: 'Сейчас играет', listeners: 'Слушат.' },
+    sortLabels: { title: 'станции', genre: 'жанру', now: 'текущему треку', listeners: 'слушателям' },
+  },
+  radiobrowser: {
+    id: 'radiobrowser',
+    label: 'Всё радио',
+    pageTitle: 'Мировое радио · radio-browser.info',
+    file: 'Radio.m3u8',
+    searchPlaceholder: 'Поиск по названию станции…',
+    nowPrefix: 'Страна',
+    listenersTitle: 'голосов',
+    album: 'radio-browser.info (soma.guilliman.ru)',
+    cols: { title: 'Станция', genre: 'Теги', now: 'Страна', listeners: 'Голоса' },
+    sortLabels: { title: 'станции', genre: 'тегам', now: 'стране', listeners: 'голосам' },
+  },
+};
+
 /* ------------------------------------------------- state --- */
 
 const state = {
+  source: 'somafm',
   kind: 'mp3',
   channels: [],
   streams: new Map(),          // `${kind}|${plsUrl}` -> direct stream url
@@ -40,6 +78,10 @@ const state = {
   query: '',
   sort: { key: 'listeners', dir: 'desc' },
   limit: 0,
+  rb: { stations: [], key: '', facets: false },  // radio-browser result cache
+  rbTag: '',
+  rbCountry: '',
+  rbLimit: 60,
   currentId: null,
   playing: false,
   now: null,                   // { current, recent }
@@ -50,9 +92,17 @@ const state = {
 const $ = (id) => document.getElementById(id);
 const el = {
   stats: { channels: $('statChannels'), quality: $('statQuality'), streams: $('statStreams') },
+  pageTitle: $('pageTitle'),
+  sources: $('sources'),
   statusLine: $('statusLine'),
+  somafmControls: $('somafmControls'),
+  rbControls: $('rbControls'),
   kinds: $('kinds'),
   limit: $('limit'),
+  rbFilters: $('rbFilters'),
+  rbTag: $('rbTag'),
+  rbCountry: $('rbCountry'),
+  rbLimit: $('rbLimit'),
   download: $('download'),
   downloadLabel: $('downloadLabel'),
   copy: $('copy'),
@@ -82,6 +132,9 @@ const el = {
 
 /** Consecutive playback failures — used to stop the quality-fallback loop. */
 let failedAttempts = 0;
+
+/** Monotonic id for radio-browser requests — drops stale out-of-order responses. */
+let rbRequestSeq = 0;
 
 /* ------------------------------------------------ helpers --- */
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => (
@@ -193,6 +246,7 @@ async function loadChannels() {
     state.channels = parseChannels(doc);
     if (state.channels.length === 0) throw new Error('в XML не найдено ни одного канала');
   } catch (err) {
+    if (state.source !== 'somafm') return;   // user switched while we were loading
     state.loading = false;
     state.error = err;
     setStatus('Ошибка загрузки', '');
@@ -205,6 +259,7 @@ async function loadChannels() {
   }
 
   state.loading = false;
+  if (state.source !== 'somafm') return;     // user switched while we were loading
   render();
   updateButtons();
   resolveAll();
@@ -226,6 +281,7 @@ function parseChannels(doc) {
     if (!KIND_ORDER.some((key) => pls[key])) continue;
     channels.push({
       id: node.getAttribute('id') || title.toLowerCase().replace(/\W+/g, '-'),
+      source: 'somafm',
       title,
       description: cleanTitle(text('description'), 240),
       genre: cleanTitle(text('genre'), 60).split('|')[0] || '—',
@@ -236,6 +292,159 @@ function parseChannels(doc) {
     });
   }
   return channels;
+}
+
+/* -------------------------------------- radio-browser.info --- */
+
+const currentList = () => (state.source === 'somafm' ? state.channels : state.rb.stations);
+
+/** Signature of the active radio-browser request — used to skip redundant reloads. */
+const rbKey = () =>
+  `${state.query.trim().toLowerCase()}|${state.rbTag}|${state.rbCountry}|${state.rbLimit}`;
+
+function rbSearchUrl() {
+  const params = new URLSearchParams({
+    limit: String(state.rbLimit),
+    hidebroken: 'true',        // only stations that passed their last health check
+    order: 'votes',
+    reverse: 'true',
+  });
+  const query = state.query.trim();
+  if (query) params.set('name', query);
+  if (state.rbTag) params.set('tag', state.rbTag);
+  if (state.rbCountry) params.set('countrycode', state.rbCountry);
+  return `${RB_API}/json/stations/search?${params.toString()}`;
+}
+
+/** Map a radio-browser station onto the shared channel shape used by the UI. */
+function normalizeRb(station) {
+  const tags = String(station.tags ?? '')
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+  const format = [station.codec, station.bitrate ? `${station.bitrate}k` : ''].filter(Boolean).join(' ');
+  const details = [station.country, format].filter(Boolean).join(' · ');
+  return {
+    id: `rb:${station.stationuuid}`,
+    source: 'radiobrowser',
+    uuid: station.stationuuid,
+    title: cleanTitle(station.name || station.stationuuid || 'Без названия'),
+    description: cleanTitle(tags.join(', '), 240),
+    genre: cleanTitle(tags.slice(0, 2).join(', ') || station.country || '—', 60),
+    image: station.favicon || '',
+    listeners: Number.parseInt(station.votes, 10) || 0,
+    lastPlaying: cleanTitle(details, 80),
+    stream: station.url_resolved || station.url || '',
+    country: station.country || '',
+    codec: station.codec || '',
+    bitrate: Number.parseInt(station.bitrate, 10) || 0,
+    homepage: station.homepage || '',
+  };
+}
+
+async function loadRb() {
+  const key = rbKey();
+  const seq = ++rbRequestSeq;
+  state.loading = true;
+  state.error = null;
+  setStatus('Загрузка станций…', 'is-busy');
+  el.errorBox.hidden = true;
+  el.grid.innerHTML = skeletons(8);
+  updateStats();
+  updateButtons();
+
+  try {
+    try {
+      await loadRbFacets();
+    } catch {
+      /* pickers stay empty — search still works without them */
+    }
+
+    const response = await fetchWithRetry(rbSearchUrl(), {
+      accept: 'application/json',
+      timeout: 20_000,
+    });
+    const data = await response.json();
+    if (seq !== rbRequestSeq) return;        // a newer request superseded this one
+    if (!Array.isArray(data)) throw new Error('radio-browser вернул неожиданный ответ');
+    state.rb.stations = data.map(normalizeRb).filter((station) => station.stream);
+    state.rb.key = key;
+  } catch (err) {
+    if (seq !== rbRequestSeq || state.source !== 'radiobrowser') return;   // superseded / switched away
+    state.loading = false;
+    state.error = err;
+    setStatus('Ошибка загрузки', '');
+    el.errorMessage.textContent = String(err?.message ?? err);
+    el.errorBox.hidden = false;
+    el.grid.innerHTML = '';
+    updateStats();
+    updateButtons();
+    return;
+  }
+
+  if (seq !== rbRequestSeq || state.source !== 'radiobrowser') return;
+  state.loading = false;
+  render();
+  updateButtons();
+}
+
+/** Populate the genre / country pickers once, then keep them in localStorage. */
+async function loadRbFacets() {
+  if (state.rb.facets) return;
+
+  try {
+    const cached = JSON.parse(localStorage.getItem(RB_FACET_KEY) ?? 'null');
+    if (cached && Date.now() - cached.t < RB_FACET_TTL_MS
+      && Array.isArray(cached.tags) && Array.isArray(cached.countries)) {
+      fillFacets(cached.tags, cached.countries);
+      state.rb.facets = true;
+      return;
+    }
+  } catch { /* corrupted cache — refetch below */ }
+
+  const [tags, countries] = await Promise.all([
+    fetchWithRetry(`${RB_API}/json/tags?order=stationcount&reverse=true&limit=${RB_FACET_LIMIT}`,
+      { accept: 'application/json' }).then((response) => response.json()),
+    fetchWithRetry(`${RB_API}/json/countries?order=stationcount&reverse=true&limit=${RB_FACET_LIMIT}`,
+      { accept: 'application/json' }).then((response) => response.json()),
+  ]);
+
+  const tagList = Array.isArray(tags) ? tags.map((tag) => tag.name).filter(Boolean) : [];
+  const countryList = Array.isArray(countries)
+    ? countries
+      .map((country) => ({ code: country.iso_3166_1 || '', name: country.name }))
+      .filter((country) => country.code)
+    : [];
+
+  fillFacets(tagList, countryList);
+  state.rb.facets = true;
+  try {
+    localStorage.setItem(RB_FACET_KEY, JSON.stringify({
+      t: Date.now(), tags: tagList, countries: countryList,
+    }));
+  } catch { /* quota exceeded — it is only a convenience cache */ }
+}
+
+function fillFacets(tags, countries) {
+  fillSelect(el.rbTag, tags.map((name) => ({ value: name, label: name })), state.rbTag);
+  fillSelect(el.rbCountry, countries.map((c) => ({ value: c.code, label: c.name })), state.rbCountry);
+}
+
+/** Replace a select's options, keeping its placeholder and current value. */
+function fillSelect(select, options, selected = '') {
+  const placeholder = select.querySelector('option');
+  select.replaceChildren(placeholder, ...options.map((option) => {
+    const node = document.createElement('option');
+    node.value = option.value;
+    node.textContent = option.label;
+    return node;
+  }));
+  select.value = selected;
+}
+
+function reloadCurrent() {
+  if (state.source === 'radiobrowser') void loadRb();
+  else void loadChannels();
 }
 
 /* ------------------------------------------- resolving --- */
@@ -326,22 +535,26 @@ const SORTERS = {
   listeners: (a, b) => a.listeners - b.listeners || a.title.localeCompare(b.title, 'ru'),
 };
 
-const SORT_LABELS = { title: 'станции', genre: 'жанру', now: 'текущему треку', listeners: 'слушателям' };
-
 const byListeners = (a, b) => b.listeners - a.listeners || a.title.localeCompare(b.title, 'ru');
 
 function visibleChannels() {
-  let list = state.channels.filter((ch) => ch.pls[state.kind]);
-  const query = state.query.trim().toLowerCase();
-  if (query) {
-    list = list.filter((ch) =>
-      `${ch.title} ${ch.genre} ${ch.description}`.toLowerCase().includes(query));
-  }
+  let list = currentList();
 
-  // "Топ-N по слушателям": scope is always the most-listened N,
-  // then the chosen column order is applied on top of that slice.
-  if (state.limit > 0) {
-    list = [...list].sort(byListeners).slice(0, state.limit);
+  // SomaFM is filtered and scoped locally; radio-browser results already
+  // come back filtered (query / tag / country) and ordered from the API.
+  if (state.source === 'somafm') {
+    list = list.filter((ch) => ch.pls[state.kind]);
+    const query = state.query.trim().toLowerCase();
+    if (query) {
+      list = list.filter((ch) =>
+        `${ch.title} ${ch.genre} ${ch.description}`.toLowerCase().includes(query));
+    }
+
+    // "Топ-N по слушателям": scope is always the most-listened N,
+    // then the chosen column order is applied on top of that slice.
+    if (state.limit > 0) {
+      list = [...list].sort(byListeners).slice(0, state.limit);
+    }
   }
 
   const { key, dir } = state.sort;
@@ -352,14 +565,15 @@ function visibleChannels() {
 
 function render() {
   const list = visibleChannels();
+  const total = currentList().length;
   el.grid.innerHTML = list.map((channel, index) => cardHtml(channel, index)).join('');
   armLogos(el.grid);
   el.emptyBox.hidden = !(list.length === 0 && !state.loading && !state.error);
   el.count.textContent = state.loading
     ? 'загрузка…'
-    : `${list.length} из ${state.channels.length}`;
-  el.stats.channels.textContent = String(state.channels.length);
-  el.stats.quality.textContent = KINDS[state.kind].short;
+    : `${list.length} из ${total}`;
+  el.stats.channels.textContent = String(total || '—');
+  el.stats.quality.textContent = state.source === 'somafm' ? KINDS[state.kind].short : 'radio-browser';
   updateStreamStat();
   updateButtons(list.length);
   syncStatus();
@@ -369,14 +583,15 @@ function render() {
 /** Keep rows of the table header in sync with the active column sort. */
 function paintSortHeaders() {
   const dirWord = state.sort.dir === 'asc' ? 'по возрастанию' : 'по убыванию';
+  const labels = SOURCES[state.source].sortLabels;
   for (const btn of el.tablehead.querySelectorAll('button.th[data-sort]')) {
     const active = btn.dataset.sort === state.sort.key;
     btn.setAttribute('aria-pressed', String(active));
     if (active) btn.dataset.dir = state.sort.dir;
     else delete btn.dataset.dir;
     btn.setAttribute('aria-label', active
-      ? `Сортировка по ${SORT_LABELS[state.sort.key]}: ${dirWord}`
-      : `Сортировать по ${SORT_LABELS[btn.dataset.sort]}`);
+      ? `Сортировка по ${labels[state.sort.key]}: ${dirWord}`
+      : `Сортировать по ${labels[btn.dataset.sort]}`);
   }
 }
 
@@ -393,6 +608,7 @@ function setSort(key) {
 /** Text of the ready status — reflects the current playlist scope (search + limit). */
 function readyStatusText() {
   const count = visibleChannels().length;
+  if (state.source === 'radiobrowser') return `${count} ${stationsWord(count)} · радио готово`;
   return `${count} ${stationsWord(count)} · ${KINDS[state.kind].short} готов`;
 }
 
@@ -401,16 +617,72 @@ function readyStatusText() {
  * Busy/loading/error texts are owned by their own code paths and left untouched.
  */
 function syncStatus() {
-  if (state.loading || state.error || state.resolve.active) return;
+  const resolving = state.source === 'somafm' && state.resolve.active;
+  if (state.loading || state.error || resolving) return;
   setStatus(readyStatusText(), 'is-ok');
 }
 
+/* ----------------------------------------------- sources --- */
+
+/** Point every source-dependent label and control at the active source. */
+function applySourceChrome() {
+  const meta = SOURCES[state.source];
+  el.pageTitle.textContent = meta.pageTitle;
+  el.search.placeholder = meta.searchPlaceholder;
+  el.somafmControls.hidden = state.source !== 'somafm';
+  el.rbControls.hidden = state.source !== 'radiobrowser';
+  el.rbFilters.hidden = state.source !== 'radiobrowser';
+
+  const input = el.sources.querySelector(`input[value="${state.source}"]`);
+  if (input) input.checked = true;
+
+  for (const btn of el.tablehead.querySelectorAll('button.th[data-sort]')) {
+    const label = meta.cols[btn.dataset.sort];
+    if (label && btn.firstChild) btn.firstChild.textContent = label;
+  }
+
+  updateStats();
+  updateButtons();
+}
+
+function selectSource(source) {
+  if (!SOURCES[source] || state.source === source) return;
+  state.source = source;
+  localStorage.setItem(SOURCE_KEY, source);
+  state.error = null;
+  applySourceChrome();
+
+  if (source === 'somafm') {
+    if (state.channels.length === 0) {
+      void loadChannels();
+      return;
+    }
+    state.loading = false;
+    render();
+    updateButtons();
+    resolveAll();
+    return;
+  }
+
+  // radio-browser results are already there and still match the filters
+  if (state.rb.stations.length && state.rb.key === rbKey()) {
+    state.loading = false;
+    render();
+    updateButtons();
+    return;
+  }
+  void loadRb();
+}
+
 function cardHtml(ch, index) {
+  const meta = SOURCES[ch.source] ?? SOURCES.somafm;
   const isCurrent = state.currentId === ch.id;
   const isLive = isCurrent && state.playing;
   const logo = ch.image
     ? `<img class="card__logo" data-logo src="${esc(ch.image)}" alt="" width="34" height="34" loading="lazy" data-letter="${esc(ch.title.slice(0, 1))}">`
     : `<span class="card__initial" aria-hidden="true">${esc(ch.title.slice(0, 1))}</span>`;
+  const now = ch.lastPlaying ? esc(ch.lastPlaying) : '—';
+  const listeners = Number(ch.listeners || 0);
 
   return `
     <div class="card${isCurrent ? ' is-playing' : ''}${isLive ? ' is-live' : ''}" data-id="${esc(ch.id)}" tabindex="0" role="button" aria-pressed="${isLive}" aria-label="${isLive ? 'Пауза' : 'Слушать'} ${esc(ch.title)}">
@@ -420,9 +692,9 @@ function cardHtml(ch, index) {
         <h2 class="card__title">${esc(ch.title)}</h2>
         <span class="card__eq" aria-hidden="true"><i></i><i></i><i></i></span>
       </div>
-      <span class="card__genre">${esc(ch.genre)}</span>
-      <span class="card__now">${ch.lastPlaying ? `<b>Играет:</b> ${esc(ch.lastPlaying)}` : '<b>Играет:</b> —'}</span>
-      <span class="card__listeners" title="слушателей">${ch.listeners}</span>
+      <span class="card__genre" title="${esc(ch.description || ch.genre)}">${esc(ch.genre)}</span>
+      <span class="card__now"><b>${esc(meta.nowPrefix)}:</b> ${now}</span>
+      <span class="card__listeners" title="${esc(meta.listenersTitle)}">${listeners}</span>
     </div>`;
 }
 
@@ -438,18 +710,24 @@ function armLogos(root) {
 }
 
 function updateButtons(listLength = visibleChannels().length) {
+  const resolving = state.source === 'somafm' && state.resolve.active;
   // direct stream URLs are the whole point — wait until the .pls round-trip is done
-  const ready = !state.loading && !state.error && !state.resolve.active && listLength > 0;
+  const ready = !state.loading && !state.error && !resolving && listLength > 0;
   el.download.disabled = !ready;
   el.copy.disabled = !ready;
-  el.downloadLabel.textContent = state.resolve.active
+  el.downloadLabel.textContent = resolving
     ? `Резолв потоков… (${state.resolve.done}/${state.resolve.total})`
     : state.loading
-      ? 'Скачать SomaFM.m3u8'
-      : `Скачать SomaFM.m3u8 (${listLength})`;
+      ? `Скачать ${SOURCES[state.source].file}`
+      : `Скачать ${SOURCES[state.source].file} (${listLength})`;
 }
 
 function updateStreamStat() {
+  if (state.source === 'radiobrowser') {
+    // radio-browser ships direct (or pre-resolved) stream URLs
+    el.stats.streams.textContent = String(state.rb.stations.length || '—');
+    return;
+  }
   const total = state.channels.filter((ch) => ch.pls[state.kind]).length;
   const ready = state.channels.filter(
     (ch) => ch.pls[state.kind] && state.streams.has(streamKey(state.kind, ch.pls[state.kind])),
@@ -464,16 +742,24 @@ function setStatus(text, modifier) {
 }
 
 const updateStats = () => {
-  el.stats.channels.textContent = String(state.channels.length || '—');
-  el.stats.quality.textContent = KINDS[state.kind].short;
+  el.stats.channels.textContent = String(currentList().length || '—');
+  el.stats.quality.textContent = state.source === 'somafm' ? KINDS[state.kind].short : 'radio-browser';
   updateStreamStat();
 };
 
 /* ------------------------------------------------ player --- */
 
-const byId = (id) => state.channels.find((ch) => ch.id === id) ?? null;
+const byId = (id) =>
+  state.channels.find((ch) => ch.id === id)
+  ?? state.rb.stations.find((ch) => ch.id === id)
+  ?? null;
 
 async function ensureStream(channel) {
+  // radio-browser already gives us a direct stream URL
+  if (channel.source === 'radiobrowser') {
+    return channel.stream ? { url: channel.stream, kind: 'rb' } : null;
+  }
+
   const order = [state.kind, ...KIND_ORDER.filter((key) => key !== state.kind)];
   for (const kind of order) {
     const pls = channel.pls[kind];
@@ -492,7 +778,7 @@ async function ensureStream(channel) {
 }
 
 async function changeQuality(newKind) {
-  if (!KINDS[newKind] || state.kind === newKind) return;
+  if (state.source !== 'somafm' || !KINDS[newKind] || state.kind === newKind) return;
   state.kind = newKind;
   localStorage.setItem(KIND_KEY, state.kind);
 
@@ -637,11 +923,12 @@ function syncMuteUi() {
 
 function updateMediaSession(channel) {
   if (!('mediaSession' in navigator) || typeof MediaMetadata === 'undefined') return;
+  const meta = SOURCES[channel.source] ?? SOURCES.somafm;
   try {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: channel.title,
-      artist: state.now?.current ? `${state.now.current.artist} — ${state.now.current.title}` : 'SomaFM',
-      album: 'SomaFM (soma.guilliman.ru)',
+      artist: state.now?.current ? `${state.now.current.artist} — ${state.now.current.title}` : meta.label,
+      album: meta.album,
       artwork: channel.image ? [{ src: channel.image, sizes: '256x256', type: 'image/png' }] : [],
     });
   } catch {
@@ -655,6 +942,15 @@ function refreshNowPlaying() {
   clearTimeout(nowPlayingTimer);
   const channel = byId(state.currentId);
   if (!channel) return;
+
+  // radio-browser has no now-playing API — show the station's flavour instead
+  if (channel.source === 'radiobrowser') {
+    setPlayerNow(channel.genre && channel.genre !== '—'
+      ? `${channel.genre} · прямой эфир`
+      : 'radio-browser · прямой эфир');
+    updateMediaSession(channel);
+    return;
+  }
 
   fetchWithRetry(songsUrl(channel.id), { retries: 0, timeout: 10_000, accept: 'application/json' })
     .then((response) => response.json())
@@ -686,15 +982,22 @@ function buildPlaylist(list) {
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit',
   });
+  const summary = state.source === 'somafm'
+    ? `# Soma FM playlist: ${list.length} channels, ${kind.key} (${kind.label})`
+    : `# radio-browser.info playlist: ${list.length} stations`;
   const lines = [
     '#EXTM3U',
-    `# Soma FM playlist: ${list.length} channels, ${kind.key} (${kind.label})`,
+    summary,
     `# Generated by soma.guilliman.ru on ${stamp}`,
   ];
   for (const channel of list) {
     lines.push(`#EXTINF:-1,${cleanTitle(channel.title)}`);
-    const stream = state.streams.get(streamKey(kindKey, channel.pls[kindKey]));
-    lines.push(stream ?? channel.pls[kindKey]);
+    if (channel.source === 'radiobrowser') {
+      lines.push(channel.stream);
+    } else {
+      const stream = state.streams.get(streamKey(kindKey, channel.pls[kindKey]));
+      lines.push(stream ?? channel.pls[kindKey]);
+    }
   }
   return `${lines.join('\n')}\n`;
 }
@@ -707,7 +1010,7 @@ function downloadPlaylist() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'SomaFM.m3u8';
+  link.download = SOURCES[state.source].file;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -768,10 +1071,40 @@ function bindEvents() {
     });
   }
 
+  el.sources.addEventListener('change', (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || input.name !== 'source') return;
+    selectSource(input.value);
+  });
+
+  // radio-browser queries the network — debounce the free-text search
+  const rbSearch = debounce(() => {
+    if (state.source === 'radiobrowser') void loadRb();
+  }, 450);
+
   el.search.addEventListener('input', () => {
     state.query = el.search.value;
+    if (state.source === 'radiobrowser') {
+      rbSearch();
+      return;
+    }
     render();
     updatePlayButtons();
+  });
+
+  el.rbTag.addEventListener('change', () => {
+    state.rbTag = el.rbTag.value;
+    void loadRb();
+  });
+
+  el.rbCountry.addEventListener('change', () => {
+    state.rbCountry = el.rbCountry.value;
+    void loadRb();
+  });
+
+  el.rbLimit.addEventListener('change', () => {
+    state.rbLimit = Number.parseInt(el.rbLimit.value, 10) || 60;
+    void loadRb();
   });
 
   el.tablehead.addEventListener('click', (event) => {
@@ -809,7 +1142,7 @@ function bindEvents() {
 
   el.download.addEventListener('click', downloadPlaylist);
   el.copy.addEventListener('click', copyPlaylist);
-  el.retry.addEventListener('click', loadChannels);
+  el.retry.addEventListener('click', reloadCurrent);
 
   el.player.toggle.addEventListener('click', togglePlayback);
   el.player.prev.addEventListener('click', () => step(-1));
@@ -837,6 +1170,11 @@ function bindEvents() {
 
     const channel = byId(state.currentId);
     if (!channel) return;
+
+    if (channel.source === 'radiobrowser') {
+      toast('Поток недоступен. Попробуйте другую станцию.', true);
+      return;
+    }
 
     // a broken stream gets two more chances (other quality → other station),
     // then we stop instead of looping forever
@@ -886,6 +1224,9 @@ function bindEvents() {
 /* -------------------------------------------------- init --- */
 
 function init() {
+  const savedSource = localStorage.getItem(SOURCE_KEY);
+  if (savedSource && SOURCES[savedSource]) state.source = savedSource;
+
   const savedKind = localStorage.getItem(KIND_KEY);
   if (savedKind && KINDS[savedKind]) state.kind = savedKind;
 
@@ -896,6 +1237,8 @@ function init() {
     el.player.quality.textContent = KINDS[state.kind].short;
   }
 
+  state.rbLimit = Number.parseInt(el.rbLimit.value, 10) || 60;
+
   const savedVolume = Number.parseFloat(localStorage.getItem(VOLUME_KEY) ?? '');
   const volume = Number.isFinite(savedVolume) ? Math.min(Math.max(savedVolume, 0), 1) : 0.8;
   el.audio.volume = volume;
@@ -905,8 +1248,11 @@ function init() {
 
   loadCache();
   bindEvents();
+  applySourceChrome();
   updateStats();
-  void loadChannels();
+
+  if (state.source === 'radiobrowser') void loadRb();
+  else void loadChannels();
 }
 
 if (document.readyState === 'loading') {

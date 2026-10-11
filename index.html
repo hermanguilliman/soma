@@ -6,13 +6,13 @@
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0b0b0d">
 <title>SomaFM — актуальный плейлист радиостанций</title>
-<meta name="description" content="Соберите актуальный M3U8-плейлист всех 46 радиостанций SomaFM прямо в браузере: выбор качества (MP3 128, AAC 130, AAC+ 64), прямые ссылки на потоки, поиск и встроенный плеер.">
+<meta name="description" content="Соберите актуальный M3U8-плейлист всех 46 радиостанций SomaFM или десятков тысяч станций со всего мира из открытого каталога radio-browser.info прямо в браузере: выбор качества (MP3 128, AAC 130, AAC+ 64), фильтры по жанру и стране, прямые ссылки на потоки и встроенный плеер.">
 <meta name="yandex-verification" content="51133ed144e8f7d1" />
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="SomaFM · плейлист радиостанций">
 <meta property="og:locale" content="ru_RU">
 <meta property="og:title" content="SomaFM — актуальный плейлист радиостанций">
-<meta property="og:description" content="Генератор M3U8-плейлиста SomaFM: 46 станций, три качества потока, прямые ссылки и встроенный плеер.">
+<meta property="og:description" content="Генератор M3U8-плейлиста: 46 станций SomaFM (три качества потока) и десятки тысяч станций мира из radio-browser.info — прямые ссылки, фильтры и встроенный плеер.">
 <meta property="og:url" content="https://soma.guilliman.ru/">
 <meta property="og:image" content="https://soma.guilliman.ru/assets/og-image.png">
 <meta property="og:image:width" content="1200">
@@ -20,7 +20,7 @@
 <meta property="og:image:alt" content="SomaFM — актуальный плейлист радиостанций в формате M3U8">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="SomaFM — актуальный плейлист радиостанций">
-<meta name="twitter:description" content="Генератор M3U8-плейлиста SomaFM: 46 станций, три качества потока, прямые ссылки и встроенный плеер.">
+<meta name="twitter:description" content="Генератор M3U8-плейлиста: 46 станций SomaFM (три качества потока) и десятки тысяч станций мира из radio-browser.info — прямые ссылки, фильтры и встроенный плеер.">
 <meta name="twitter:image" content="https://soma.guilliman.ru/assets/og-image.png">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -43,7 +43,7 @@
 
 <main>
   <div class="pagehead">
-    <h1>Актуальный плейлист SomaFM</h1>
+    <h1 id="pageTitle">Актуальный плейлист SomaFM</h1>
     <p class="stats" id="stats">
       <span><b id="statChannels">—</b>&nbsp;станций</span>
       <span aria-hidden="true">·</span>
@@ -53,34 +53,62 @@
     </p>
   </div>
 
-  <section class="ctl" aria-label="Генератор плейлиста">
-    <fieldset class="kinds" id="kinds">
-      <legend class="visually-hidden">Качество потока</legend>
-      <label class="kind">
-        <input type="radio" name="kind" value="mp3" checked>
-        <span class="kind__key">MP3</span>
-        <span class="kind__hint">128</span>
-      </label>
-      <label class="kind">
-        <input type="radio" name="kind" value="aac">
-        <span class="kind__key">AAC</span>
-        <span class="kind__hint">~130</span>
-      </label>
-      <label class="kind">
-        <input type="radio" name="kind" value="aacp">
-        <span class="kind__key">AAC+</span>
-        <span class="kind__hint">64</span>
-      </label>
-    </fieldset>
+  <fieldset class="sources" id="sources">
+    <legend class="visually-hidden">Источник станций</legend>
+    <label class="source">
+      <input type="radio" name="source" value="somafm" checked>
+      <span class="source__name">SomaFM</span>
+      <span class="source__hint">somafm.com</span>
+    </label>
+    <label class="source">
+      <input type="radio" name="source" value="radiobrowser">
+      <span class="source__name">Всё радио</span>
+      <span class="source__hint">radio-browser.info</span>
+    </label>
+  </fieldset>
 
-    <div class="ctl__field">
-      <label for="limit" class="visually-hidden">Охват плейлиста</label>
-      <select id="limit">
-        <option value="0" selected>Все станции</option>
-        <option value="10">Топ-10 по слушателям</option>
-        <option value="20">Топ-20 по слушателям</option>
-        <option value="30">Топ-30 по слушателям</option>
-      </select>
+  <section class="ctl" aria-label="Генератор плейлиста">
+    <div class="ctl__group" id="somafmControls">
+      <fieldset class="kinds" id="kinds">
+        <legend class="visually-hidden">Качество потока</legend>
+        <label class="kind">
+          <input type="radio" name="kind" value="mp3" checked>
+          <span class="kind__key">MP3</span>
+          <span class="kind__hint">128</span>
+        </label>
+        <label class="kind">
+          <input type="radio" name="kind" value="aac">
+          <span class="kind__key">AAC</span>
+          <span class="kind__hint">~130</span>
+        </label>
+        <label class="kind">
+          <input type="radio" name="kind" value="aacp">
+          <span class="kind__key">AAC+</span>
+          <span class="kind__hint">64</span>
+        </label>
+      </fieldset>
+
+      <div class="ctl__field">
+        <label for="limit" class="visually-hidden">Охват плейлиста</label>
+        <select id="limit">
+          <option value="0" selected>Все станции</option>
+          <option value="10">Топ-10 по слушателям</option>
+          <option value="20">Топ-20 по слушателям</option>
+          <option value="30">Топ-30 по слушателям</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="ctl__group" id="rbControls" hidden>
+      <div class="ctl__field">
+        <label for="rbLimit" class="visually-hidden">Сколько станций показать</label>
+        <select id="rbLimit">
+          <option value="30">Топ-30 станций</option>
+          <option value="60" selected>Топ-60 станций</option>
+          <option value="100">Топ-100 станций</option>
+          <option value="200">Топ-200 станций</option>
+        </select>
+      </div>
     </div>
 
     <div class="ctl__end">
@@ -101,10 +129,18 @@
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m10.5 10.5 3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       <input type="search" id="search" placeholder="Поиск: название, жанр, описание…" autocomplete="off">
     </div>
+    <div class="rbonly" id="rbFilters" hidden>
+      <select id="rbTag" aria-label="Жанр (тег)">
+        <option value="">Любой жанр</option>
+      </select>
+      <select id="rbCountry" aria-label="Страна">
+        <option value="">Любая страна</option>
+      </select>
+    </div>
     <span class="count" id="count">—</span>
   </section>
 
-  <section class="stations" aria-label="Станции SomaFM">
+  <section class="stations" aria-label="Станции">
     <div class="tablehead" id="tablehead">
       <span class="th th--num" aria-hidden="true">#</span>
       <button type="button" class="th th--title" data-sort="title" aria-pressed="false" aria-label="Сортировать по станции">Станция<span class="th__arrow" aria-hidden="true"></span></button>
@@ -116,7 +152,7 @@
   </section>
 
   <div class="notice notice--error" id="errorBox" hidden>
-    <b>Не удалось получить список каналов.</b>
+    <b>Не удалось получить список станций.</b>
     <span id="errorMessage"></span>
     <button type="button" class="btn" id="retry">Повторить</button>
   </div>
@@ -129,8 +165,10 @@
 
 <footer class="footer">
   <p>
-    Плейлист собирается в браузере из открытого API
+    Плейлист собирается в браузере из открытых API
     <a href="https://somafm.com" target="_blank" rel="noopener noreferrer">SomaFM</a>
+    и каталога
+    <a href="https://www.radio-browser.info" target="_blank" rel="noopener noreferrer">radio-browser.info</a>
     — станции и ссылки всегда актуальны.
   </p>
   <p>© 2026 Herman Guilliman</p>
