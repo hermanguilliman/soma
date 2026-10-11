@@ -141,6 +141,7 @@
       <button type="button" class="th th--genre" data-sort="genre" aria-pressed="false" aria-label="Сортировать по жанру">Жанр<span class="th__arrow" aria-hidden="true"></span></button>
       <button type="button" class="th th--now" data-sort="now" aria-pressed="false" aria-label="Сортировать по текущему треку">Сейчас играет<span class="th__arrow" aria-hidden="true"></span></button>
       <button type="button" class="th th--listeners" data-sort="listeners" aria-pressed="true" aria-label="Сортировка по слушателям: по убыванию">Слушат.<span class="th__arrow" aria-hidden="true"></span></button>
+      <span class="th th--info" aria-hidden="true"></span>
     </div>
     <div class="grid" id="grid"></div>
   </section>
@@ -200,6 +201,28 @@
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<dialog class="station-detail" id="stationDialog" aria-labelledby="detailTitle">
+  <div class="station-detail__head">
+    <span class="station-detail__logo">
+      <img id="detailLogo" alt="" width="52" height="52" hidden>
+      <span id="detailFallback" aria-hidden="true">◉</span>
+    </span>
+    <div class="station-detail__titles">
+      <h3 id="detailTitle">—</h3>
+      <p id="detailMeta">—</p>
+    </div>
+    <button type="button" class="iconbtn station-detail__close" id="detailClose" aria-label="Закрыть">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <dl class="station-detail__rows" id="detailRows"></dl>
+  <div class="station-detail__actions">
+    <button type="button" class="btn btn--primary" id="detailPlay">Слушать</button>
+    <button type="button" class="btn btn--ghost" id="detailCopy">Копировать ссылку на поток</button>
+    <a class="btn btn--ghost" id="detailHomepage" rel="noopener" target="_blank" hidden>Сайт станции</a>
+  </div>
+</dialog>
 <audio id="audio" preload="none"></audio>
 
 <script src="assets/app.js" defer></script>

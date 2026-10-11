@@ -132,18 +132,30 @@ const el = {
   retry: $('retry'),
   toast: $('toast'),
   audio: $('audio'),
-    player: {
-      logo: $('playerLogo'),
-      fallback: $('playerFallback'),
-      title: $('playerTitle'),
-      now: $('playerNow'),
-      toggle: $('toggle'),
-      prev: $('prev'),
-      next: $('next'),
-      mute: $('mute'),
-      volume: $('volume'),
-      format: $('playerFormat'),
-    },
+  station: {
+    dialog: $('stationDialog'),
+    title: $('detailTitle'),
+    meta: $('detailMeta'),
+    logo: $('detailLogo'),
+    fallback: $('detailFallback'),
+    rows: $('detailRows'),
+    play: $('detailPlay'),
+    copy: $('detailCopy'),
+    homepage: $('detailHomepage'),
+    close: $('detailClose'),
+  },
+  player: {
+    logo: $('playerLogo'),
+    fallback: $('playerFallback'),
+    title: $('playerTitle'),
+    now: $('playerNow'),
+    toggle: $('toggle'),
+    prev: $('prev'),
+    next: $('next'),
+    mute: $('mute'),
+    volume: $('volume'),
+    format: $('playerFormat'),
+  },
 };
 
 /** Consecutive playback failures — used to stop the quality-fallback loop. */
@@ -182,6 +194,29 @@ function plural(n, one, few, many) {
 }
 
 const stationsWord = (n) => plural(n, 'станция', 'станции', 'станций');
+
+const fmtNum = (n) => new Intl.NumberFormat('ru-RU').format(Number(n) || 0);
+
+/** Keep the station card readable and concise: a few rows as <dl>. */
+const detailRow = (label, value) => `
+  <div class="station-detail__row">
+    <dt>${esc(label)}</dt>
+    <dd>${value}</dd>
+  </div>`;
+
+/** "2024-01-20 08:00:00" (UTC, catalogue format) → a friendlier line. */
+function fmtChecked(text, ok) {
+  const base = ok ? 'онлайн' : 'офлайн';
+  if (!text) return base;
+  const date = new Date(String(text).replace(' ', 'T') + 'Z');
+  if (Number.isNaN(date.getTime())) return base;
+  const diff = Date.now() - date.getTime();
+  const time = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  if (diff < 3600_000) return ok ? 'онлайн · только что' : base;
+  if (diff < 86_400_000) return ok ? `онлайн · ${Math.max(1, Math.floor(diff / 3600_000))} ч назад` : base;
+  const day = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+  return ok ? `онлайн · ${day}, ${time}` : base;
+}
 
 async function fetchWithRetry(url, { retries = 2, timeout = 15_000, accept = null } = {}) {
   let lastError = null;
@@ -457,9 +492,17 @@ function normalizeRb(station) {
     lastPlaying: cleanTitle(details, 80),
     stream: station.url_resolved || station.url || '',
     country: station.country || '',
+    state: station.state || '',
+    language: station.language || '',
     codec: station.codec || '',
     bitrate: Number.parseInt(station.bitrate, 10) || 0,
     homepage: station.homepage || '',
+    url: station.url || '',
+    clickcount: Number.parseInt(station.clickcount, 10) || 0,
+    clicktrend: Number.parseInt(station.clicktrend, 10) || 0,
+    checkedOk: station.lastcheckok === 1,
+    checkedAt: station.lastchecktime || '',
+    hls: station.hls === 1,
   };
 }
 
@@ -806,17 +849,26 @@ function cardHtml(ch, index) {
   const now = ch.lastPlaying ? esc(ch.lastPlaying) : '—';
   const listeners = Number(ch.listeners || 0);
 
+  const info = ch.source === 'radiobrowser'
+    ? `<button type="button" class="card__info" data-info aria-label="Подробнее о станции ${esc(ch.title)}">
+         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 7.2v3.5M8 5.1v.05" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+       </button>`
+    : '';
+
   return `
-    <div class="card${isCurrent ? ' is-playing' : ''}${isLive ? ' is-live' : ''}" data-id="${esc(ch.id)}" tabindex="0" role="button" aria-pressed="${isLive}" aria-label="${isLive ? 'Пауза' : 'Слушать'} ${esc(ch.title)}">
-      <span class="card__num" aria-hidden="true">${String(index + 1).padStart(2, '0')}</span>
-      <div class="card__name">
-        <div class="card__thumb">${logo}</div>
-        <h2 class="card__title">${esc(ch.title)}</h2>
-        <span class="card__eq" aria-hidden="true"><i></i><i></i><i></i></span>
+    <div class="card${isCurrent ? ' is-playing' : ''}${isLive ? ' is-live' : ''}" data-id="${esc(ch.id)}">
+      ${info}
+      <div class="card__main" tabindex="0" role="button" aria-pressed="${isLive}" aria-label="${isLive ? 'Пауза' : 'Слушать'} ${esc(ch.title)}">
+        <span class="card__num" aria-hidden="true">${String(index + 1).padStart(2, '0')}</span>
+        <div class="card__name">
+          <div class="card__thumb">${logo}</div>
+          <h2 class="card__title">${esc(ch.title)}</h2>
+          <span class="card__eq" aria-hidden="true"><i></i><i></i><i></i></span>
+        </div>
+        <span class="card__genre" title="${esc(ch.description || ch.genre)}">${esc(ch.genre)}</span>
+        <span class="card__now"><b>${esc(meta.nowPrefix)}:</b> ${now}</span>
+        <span class="card__listeners" title="${esc(meta.listenersTitle)}">${listeners}</span>
       </div>
-      <span class="card__genre" title="${esc(ch.description || ch.genre)}">${esc(ch.genre)}</span>
-      <span class="card__now"><b>${esc(meta.nowPrefix)}:</b> ${now}</span>
-      <span class="card__listeners" title="${esc(meta.listenersTitle)}">${listeners}</span>
     </div>`;
 }
 
@@ -829,6 +881,88 @@ function armLogos(root) {
       img.replaceWith(span);
     }, { once: true });
   });
+}
+
+/* ---------------------------------------- station detail --- */
+
+async function copyText(text, okMessage) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(okMessage);
+    return true;
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    toast(ok ? okMessage : 'Копирование не поддерживается браузером', !ok);
+    return ok;
+  }
+}
+
+let stationDetailsId = null;
+
+/** Present the "Всё радио" station card. All data lives in the loaded list. */
+function openStationDetails(id) {
+  const channel = byId(id);
+  if (!channel || channel.source !== 'radiobrowser') return;
+  stationDetailsId = id;
+
+  el.station.title.textContent = channel.title;
+  el.station.meta.textContent = channel.genre && channel.genre !== '—'
+    ? channel.genre
+    : channel.country || 'Радиостанция';
+
+  if (channel.image) {
+    el.station.logo.hidden = false;
+    el.station.fallback.hidden = true;
+    el.station.logo.src = channel.image;
+    el.station.logo.onerror = () => {
+      el.station.logo.hidden = true;
+      el.station.fallback.hidden = false;
+    };
+  } else {
+    el.station.logo.hidden = true;
+    el.station.fallback.hidden = false;
+  }
+
+  const rows = [];
+  if (channel.description) rows.push(detailRow('Теги', esc(channel.description)));
+  const geo = [channel.country, channel.state].filter(Boolean).join(', ');
+  if (geo) rows.push(detailRow('Страна', esc(geo)));
+  if (channel.language) rows.push(detailRow('Язык', esc(channel.language)));
+  const format = [
+    channel.codec,
+    channel.bitrate ? `${channel.bitrate} kbps` : '',
+    channel.hls ? 'HLS' : '',
+  ].filter(Boolean).join(' · ');
+  if (format) rows.push(detailRow('Формат', esc(format)));
+  rows.push(detailRow('Голоса', esc(fmtNum(channel.listeners))));
+  if (channel.clickcount) {
+    const trend = channel.clicktrend
+      ? ` · тренд ${fmtNum(Math.abs(channel.clicktrend))}${channel.clicktrend < 0 ? '↓' : '↑'}`
+      : '';
+    rows.push(detailRow('Прослушиваний', esc(`${fmtNum(channel.clickcount)}${trend}`)));
+  }
+  rows.push(detailRow('Проверка', esc(fmtChecked(channel.checkedAt, channel.checkedOk))));
+  el.station.rows.innerHTML = rows.join('');
+
+  if (channel.homepage) {
+    el.station.homepage.href = channel.homepage;
+    el.station.homepage.hidden = false;
+  } else {
+    el.station.homepage.hidden = true;
+  }
+
+  el.station.dialog.showModal();
+}
+
+function closeStationDetails() {
+  if (el.station.dialog.open) el.station.dialog.close();
 }
 
 function updateButtons(listLength = visibleChannels().length) {
@@ -935,6 +1069,22 @@ async function changeQuality(newKind) {
   }
 }
 
+/**
+ * Best-effort click counter for the "Всё радио" catalogue: fires and forgets,
+ * must never disturb the session's cached API base (flaky network is normal).
+ */
+function trackRbClick(channel) {
+  if (channel.source !== 'radiobrowser' || !channel.uuid) return;
+  const base = state.rb.api || RB_API_BUILTIN.find(Boolean);
+  if (!base) return;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  fetch(`${base}/json/url/${encodeURIComponent(channel.uuid)}`, {
+    signal: controller.signal,
+    headers: { Accept: 'application/json' },
+  }).catch(() => { /* click counter is best-effort */ }).finally(() => clearTimeout(timer));
+}
+
 async function playChannel(id) {
   const channel = byId(id);
   if (!channel) return;
@@ -961,6 +1111,7 @@ async function playChannel(id) {
   if (state.currentId !== id) return; // user switched while resolving
 
   el.audio.src = stream.url;
+  trackRbClick(channel);
   try {
     await el.audio.play();
   } catch (err) {
@@ -1052,7 +1203,8 @@ function updatePlayButtons() {
     const active = current && state.playing;
     card.classList.toggle('is-playing', current); // selected row
     card.classList.toggle('is-live', active);     // actually playing → animated
-    card.setAttribute('aria-pressed', String(active));
+    const main = card.querySelector('.card__main');
+    if (main) main.setAttribute('aria-pressed', String(active));
   }
 }
 
@@ -1254,6 +1406,12 @@ function bindEvents() {
   });
 
   el.grid.addEventListener('click', (event) => {
+    const info = event.target.closest('.card__info');
+    if (info) {
+      const card = info.closest('.card');
+      if (card?.dataset.id) openStationDetails(card.dataset.id);
+      return;
+    }
     const card = event.target.closest('.card');
     if (!card || !card.dataset.id) return;
     if (state.currentId === card.dataset.id && el.audio.src) {
@@ -1264,6 +1422,8 @@ function bindEvents() {
   });
 
   el.grid.addEventListener('keydown', (event) => {
+    // the info button keeps its own Enter/Space behaviour
+    if (event.target.closest('.card__info')) return;
     if (event.key !== 'Enter' && event.key !== ' ') return;
     const card = event.target.closest('.card');
     if (!card || !card.dataset.id) return;
@@ -1282,6 +1442,25 @@ function bindEvents() {
   el.player.toggle.addEventListener('click', togglePlayback);
   el.player.prev.addEventListener('click', () => step(-1));
   el.player.next.addEventListener('click', () => step(1));
+
+  // station detail dialog
+  el.station.close.addEventListener('click', closeStationDetails);
+  el.station.dialog.addEventListener('click', (event) => {
+    if (event.target === el.station.dialog) closeStationDetails();
+  });
+  el.station.play.addEventListener('click', () => {
+    const id = stationDetailsId;
+    closeStationDetails();
+    if (id) void playChannel(id);
+  });
+  el.station.copy.addEventListener('click', () => {
+    if (!stationDetailsId) return;
+    const channel = byId(stationDetailsId);
+    if (!channel) return;
+    const url = channel.stream || channel.url;
+    if (url) void copyText(url, 'Ссылка на поток скопирована');
+    else toast('Ссылка на поток недоступна', true);
+  });
 
   el.audio.addEventListener('play', () => {
     state.playing = true;
