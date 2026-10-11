@@ -794,7 +794,9 @@ body.is-muted #mute { color: var(--text); }
   gap: 12px;
 }
 
-.player__quality {
+.player__format {
+  display: inline-flex;
+  align-items: center;
   height: 32px;
   padding: 0 10px;
   border: 1px solid var(--line);
@@ -803,13 +805,7 @@ body.is-muted #mute { color: var(--text); }
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
-  cursor: pointer;
-  transition: color .2s, border-color .2s, background .2s;
-}
-.player__quality:hover {
-  color: var(--text);
-  border-color: var(--line-strong);
-  background: #23232b;
+  white-space: nowrap;
 }
 
 /* equalizer — always occupies its space, wakes up while playing */

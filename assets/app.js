@@ -142,7 +142,7 @@ const el = {
       next: $('next'),
       mute: $('mute'),
       volume: $('volume'),
-      quality: $('playerQuality'),
+      format: $('playerFormat'),
     },
 };
 
@@ -764,6 +764,7 @@ function applySourceChrome() {
 
   updateStats();
   updateButtons();
+  updatePlayerFormat();
 }
 
 function selectSource(source) {
@@ -906,9 +907,7 @@ async function changeQuality(newKind) {
   const kindInput = el.kinds.querySelector(`input[value="${state.kind}"]`);
   if (kindInput) kindInput.checked = true;
 
-  if (el.player.quality) {
-    el.player.quality.textContent = KINDS[state.kind].short;
-  }
+  updatePlayerFormat();
 
   updateStats();
   render();
@@ -998,6 +997,28 @@ function step(delta) {
   void playChannel(next.id);
 }
 
+/** Codec + bitrate label for a station, e.g. "MP3 128". */
+function channelFormat(channel) {
+  if (channel.source === 'somafm') return KINDS[state.kind].short;
+  const codec = String(channel.codec || '').trim().toUpperCase();
+  const kbps = Number(channel.bitrate) || 0;
+  if (codec && kbps) return `${codec} ${kbps}`;
+  return codec || (kbps ? `${kbps} kbps` : '—');
+}
+
+/**
+ * Show the current stream's real format in the player chip. SomaFM's quality is
+ * chosen from the controls, while "Всё радио" carries its own codec/bitrate per
+ * station — so the chip follows the station, not the active tab.
+ */
+function updatePlayerFormat() {
+  if (!el.player.format) return;
+  const channel = state.currentId ? byId(state.currentId) : null;
+  el.player.format.textContent = channel
+    ? channelFormat(channel)
+    : (state.source === 'somafm' ? KINDS[state.kind].short : '—');
+}
+
 function paintPlayerStation(channel) {
   el.player.title.textContent = channel.title;
   el.player.fallback.hidden = Boolean(channel.image);
@@ -1010,6 +1031,7 @@ function paintPlayerStation(channel) {
       el.player.fallback.hidden = false;
     };
   }
+  updatePlayerFormat();
   updateMediaSession(channel);
 }
 
@@ -1184,14 +1206,6 @@ function bindEvents() {
     void changeQuality(input.value);
   });
 
-  if (el.player.quality) {
-    el.player.quality.addEventListener('click', () => {
-      const currentIndex = KIND_ORDER.indexOf(state.kind);
-      const nextKind = KIND_ORDER[(currentIndex + 1) % KIND_ORDER.length];
-      void changeQuality(nextKind);
-    });
-  }
-
   el.sources.addEventListener('change', (event) => {
     const input = event.target;
     if (!(input instanceof HTMLInputElement) || input.name !== 'source') return;
@@ -1354,9 +1368,7 @@ function init() {
   const kindInput = el.kinds.querySelector(`input[value="${state.kind}"]`);
   if (kindInput) kindInput.checked = true;
 
-  if (el.player.quality) {
-    el.player.quality.textContent = KINDS[state.kind].short;
-  }
+  updatePlayerFormat();
 
   state.rbLimit = Number.parseInt(el.rbLimit.value, 10) || 60;
 
