@@ -27,6 +27,7 @@ const KIND_KEY = 'soma.kind';
 const VOLUME_KEY = 'soma.volume';
 const CONCURRENCY = 6;
 const NOW_PLAYING_INTERVAL = 20_000;
+const ICY_INTERVAL = 30_000;         // how often to re-read a stream's ICY title
 
 /* --------------------------------------- radio-browser.info --- */
 
@@ -1216,13 +1217,22 @@ function syncMuteUi() {
   el.player.mute.setAttribute('title', label);
 }
 
+/** Text of the currently playing track from either source, or '' if unknown. */
+function currentTrackText() {
+  const now = state.now;
+  if (!now) return '';
+  if (now.icy) return now.icy;
+  if (now.current) return `${now.current.artist} — ${now.current.title}`;
+  return '';
+}
+
 function updateMediaSession(channel) {
   if (!('mediaSession' in navigator) || typeof MediaMetadata === 'undefined') return;
   const meta = SOURCES[channel.source] ?? SOURCES.somafm;
   try {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: channel.title,
-      artist: state.now?.current ? `${state.now.current.artist} — ${state.now.current.title}` : meta.label,
+      artist: currentTrackText() || meta.label,
       album: meta.album,
       artwork: channel.image ? [{ src: channel.image, sizes: '256x256', type: 'image/png' }] : [],
     });
@@ -1233,17 +1243,59 @@ function updateMediaSession(channel) {
 
 let nowPlayingTimer = 0;
 
+/**
+ * Ask the bundled proxy to read the live stream's ICY "now playing" title.
+ * The browser cannot do this itself (no CORS on the audio stream), and the
+ * title is best-effort: any failure just returns '' and the caller falls back.
+ */
+async function fetchIcyTitle(channel) {
+  if (!RB_API_PROXY || !channel.stream) return '';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 9000);
+  try {
+    const response = await fetch(`${RB_API_PROXY}/icy?url=${encodeURIComponent(channel.stream)}`, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) return '';
+    const data = await response.json().catch(() => null);
+    return typeof data?.title === 'string' ? data.title.trim() : '';
+  } catch {
+    return ''; // offline / no metadata — keep the fallback line
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function refreshNowPlaying() {
   clearTimeout(nowPlayingTimer);
   const channel = byId(state.currentId);
   if (!channel) return;
 
-  // radio-browser has no now-playing API — show the station's flavour instead
+  // radio-browser has no now-playing API; the stream itself may carry one.
   if (channel.source === 'radiobrowser') {
-    setPlayerNow(channel.genre && channel.genre !== '—'
+    const fallback = channel.genre && channel.genre !== '—'
       ? `${channel.genre} · прямой эфир`
-      : 'Прямой эфир');
-    updateMediaSession(channel);
+      : 'Прямой эфир';
+    // while polling, keep the last known title on screen instead of flickering
+    if (!state.now?.icy) setPlayerNow(fallback);
+    fetchIcyTitle(channel)
+      .then((title) => {
+        if (state.currentId !== channel.id) return;
+        if (title) {
+          state.now = { icy: title };
+          setPlayerNow(title);
+        } else if (!state.now?.icy) {
+          setPlayerNow(fallback);
+        }
+        updateMediaSession(channel);
+      })
+      .catch(() => { /* keep the fallback — metadata is best-effort */ })
+      .finally(() => {
+        if (state.currentId === channel.id) {
+          nowPlayingTimer = setTimeout(refreshNowPlaying, ICY_INTERVAL);
+        }
+      });
     return;
   }
 

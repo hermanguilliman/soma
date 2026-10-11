@@ -22,15 +22,19 @@
  *       npx wrangler deploy
  *
  * To lock it to a different origin, set the ALLOWED_ORIGINS var (comma-separated)
- * in the dashboard or wrangler.toml. Only read-only `/json/*` GET requests are
- * relayed, with a short edge cache.
+ * in the dashboard or wrangler.toml. Read-only `/json/*` GET requests are relayed
+ * with a short edge cache; `/icy?url=…` reads a live stream's ICY metadata and
+ * returns its current track title.
  */
 
 const UPSTREAM = 'https://all.api.radio-browser.info';
 const ALLOWED_PREFIX = '/json/';
+const ICY_PREFIX = '/icy';
 const CACHE_TTL = 300; // seconds — how long Cloudflare keeps a reply in front of upstream
 const UPSTREAM_TIMEOUT = 6000; // ms — abandon a stalled upstream request and try again
 const UPSTREAM_ATTEMPTS = 3; // transient radio-browser hiccups are common for large replies
+const ICY_TIMEOUT = 6000; // ms — cap the wait for a stream's first metadata block
+const ICY_MAX_BYTES = 512 * 1024; // hard cap on how much stream we read before giving up
 const CONTACT = 'https://soma.guilliman.ru';
 
 // Browsers always send Origin (and/or Referer) on cross-origin requests; only
@@ -60,6 +64,13 @@ export default {
     }
 
     const url = new URL(request.url);
+
+    // Live "now playing" reader for third-party radio streams — the browser
+    // cannot read ICY metadata from an <audio> stream (no CORS), so we do it.
+    if (url.pathname === ICY_PREFIX) {
+      return handleIcy(url, caller);
+    }
+
     if (!url.pathname.startsWith(ALLOWED_PREFIX)) {
       return json({ error: 'not found' }, 404, caller);
     }
@@ -156,4 +167,135 @@ function json(body, status, origin) {
     status,
     headers: { ...corsHeaders(origin), 'Content-Type': 'application/json' },
   });
+}
+
+/* ------------------------------------------------------- icy --- */
+
+/**
+ * Return the current track of a live stream as `{ ok, title, name, br }`.
+ * Reads the stream's ICY metadata (Shoutcast/Icecast `StreamTitle`) instead of
+ * the audio body, then hangs up. Streams without ICY (e.g. HLS) yield ok:false
+ * and the client keeps its own fallback text.
+ */
+async function handleIcy(url, caller) {
+  const raw = url.searchParams.get('url') || '';
+  let target;
+  try {
+    target = new URL(raw);
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') throw new Error('scheme');
+  } catch {
+    return json({ ok: false, title: '', error: 'bad url' }, 400, caller);
+  }
+
+  let info;
+  try {
+    info = await readIcy(target);
+  } catch {
+    info = { ok: false, title: '' };
+  }
+
+  const headers = new Headers(corsHeaders(caller));
+  headers.set('Content-Type', 'application/json; charset=utf-8');
+  // Track titles change every few minutes — a short edge cache dedupes listeners.
+  headers.set('Cache-Control', 'public, max-age=15');
+  headers.set('X-Proxy', 'icy');
+  return new Response(JSON.stringify(info), { status: 200, headers });
+}
+
+async function readIcy(target) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ICY_TIMEOUT);
+  try {
+    const response = await fetch(target.href, {
+      headers: {
+        // Ask the server to interleave metadata into the stream body.
+        'Icy-MetaData': '1',
+        Accept: '*/*',
+        'User-Agent': `soma-guilliman-proxy/1.0 (+${CONTACT})`,
+      },
+      signal: controller.signal,
+      redirect: 'follow',
+    });
+
+    const name = (response.headers.get('icy-name') || '').trim();
+    const br = (response.headers.get('icy-br') || '').trim();
+
+    // Some servers hand the title over directly in a header.
+    const headerTitle = (response.headers.get('icy-title') || '').trim();
+    if (headerTitle) return { ok: true, title: headerTitle, name, br };
+
+    const metaint = Number.parseInt(response.headers.get('icy-metaint') || '0', 10);
+    if (!response.body || !Number.isFinite(metaint) || metaint <= 0) {
+      return { ok: false, title: '', name, br };
+    }
+
+    const title = await readStreamTitle(response.body, metaint);
+    return { ok: Boolean(title), title, name, br };
+  } finally {
+    clearTimeout(timer);
+    controller.abort(); // stop pulling from the station as soon as we are done
+  }
+}
+
+/**
+ * Walk the ICY framing — every `metaint` audio bytes sit one length byte and a
+ * padded metadata block — and return the first piece of usable `StreamTitle`.
+ */
+async function readStreamTitle(stream, metaint) {
+  const reader = stream.getReader();
+  const cap = Math.min(ICY_MAX_BYTES, Math.max(64 * 1024, metaint * 6));
+  let skip = metaint; // audio bytes still to discard before the next length byte
+  let block = null;   // Uint8Array of the current metadata block being filled
+  let pos = 0;
+  let seen = 0;
+
+  try {
+    while (seen < cap) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      seen += value.length;
+
+      let i = 0;
+      while (i < value.length) {
+        if (skip > 0) {
+          const step = Math.min(skip, value.length - i);
+          i += step;
+          skip -= step;
+        } else if (block === null) {
+          const len = value[i] * 16; // length byte counts 16-byte units
+          i += 1;
+          if (len === 0) skip = metaint; // no metadata this round
+          else { block = new Uint8Array(len); pos = 0; }
+        } else {
+          const step = Math.min(block.length - pos, value.length - i);
+          block.set(value.subarray(i, i + step), pos);
+          i += step;
+          pos += step;
+          if (pos >= block.length) {
+            const title = extractStreamTitle(decodeIcy(block));
+            if (title) return title;
+            block = null;
+            skip = metaint;
+          }
+        }
+      }
+    }
+  } finally {
+    try { await reader.cancel(); } catch { /* stream already gone */ }
+  }
+  return '';
+}
+
+/** ICY metadata is nominally UTF-8 but Russian stations often send windows-1251. */
+function decodeIcy(bytes) {
+  const utf8 = new TextDecoder('utf-8').decode(bytes);
+  if (!utf8.includes('\uFFFD')) return utf8;
+  try { return new TextDecoder('windows-1251').decode(bytes); } catch { return utf8; }
+}
+
+function extractStreamTitle(text) {
+  const match = /StreamTitle\s*=\s*'([\s\S]*?)'\s*;/i.exec(text)
+    || /StreamTitle\s*=\s*"([\s\S]*?)"\s*;/i.exec(text)
+    || /StreamTitle\s*=\s*'([\s\S]*?)'/i.exec(text);
+  return match ? match[1].replace(/\0+$/, '').trim() : '';
 }
