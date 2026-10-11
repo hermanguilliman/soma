@@ -33,10 +33,11 @@ const ICY_INTERVAL = 30_000;         // how often to re-read a stream's ICY titl
 /* --------------------------------------- radio-browser.info --- */
 
 // Official public catalogue endpoint — a single server in DE, reachable from
-// most networks but blocked on some (e.g. Russia). A bundled reverse proxy
-// (see proxy/worker.js) is tried first so the catalogue keeps working there;
-// requests fall back to the official server (and back again) when an endpoint
-// is unreachable.
+// most networks but blocked on some (e.g. Russia), where the bundled reverse
+// proxy (see proxy/worker.js) takes over. The official server is tried first so
+// a client that can reach it never touches the worker; the proxy is only a
+// fallback, and the endpoint that answered is remembered between visits so the
+// probe is not repeated on every page load.
 //
 // The built-in proxy host is stored base64-encoded so it is not trivially
 // greppable in the public source; it is locked to this site's origin server-side.
@@ -48,8 +49,13 @@ const RB_API_PROXY = (() => {
     return '';                        // no atob (unlikely) — official server only
   }
 })();
-// Endpoints to try, in priority order (proxy first, official server as backup).
-const RB_API_BUILTIN = [RB_API_PROXY, RB_API_OFFICIAL].filter(Boolean);
+// Endpoints in preference order: official server first, bundled proxy as backup.
+const RB_API_BUILTIN = [RB_API_OFFICIAL, RB_API_PROXY].filter(Boolean);
+const RB_API_MEMO_KEY = 'soma.rb.endpoint.v1';    // last endpoint that answered
+const RB_API_MEMO_TTL_MS = 12 * 60 * 60 * 1000;   // re-check the preference twice a day
+const RB_API_TIMEOUT = 10_000;                    // default per-request timeout
+const RB_API_PROBE_TIMEOUT = 3000;                // direct endpoint must answer fast to win
+
 const RB_PAGE_SIZE = 100;                // stations per request — big replies stall on flaky links
 const RB_FACET_LIMIT = 80;               // entries offered by the tag / country pickers
 const RB_FACET_KEY = 'soma.rb.facets.v1';
@@ -460,9 +466,73 @@ const viewResolvesStreams = () => state.source === 'somafm' || state.source === 
 const rbKey = () =>
   `${state.query.trim().toLowerCase()}|${state.rbTag}|${state.rbCountry}|${state.rbLimit}`;
 
-/** API bases to try, in order: built-in proxy → official server. */
+/** The catalogue base that last answered, remembered between visits (TTL-bounded). */
+function rememberedRbBase() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RB_API_MEMO_KEY) ?? 'null');
+    if (!raw || typeof raw.b !== 'string') return '';
+    if (Date.now() - (raw.t ?? 0) > RB_API_MEMO_TTL_MS) return '';
+    return RB_API_BUILTIN.includes(raw.b) ? raw.b : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Preferred endpoint right now: the session winner, else the remembered one. */
+const preferredRbBase = () => state.rb.api || rememberedRbBase() || RB_API_BUILTIN[0] || '';
+
+/** API bases to try, in order: the preferred endpoint first, the rest as backup. */
 function rbApiBases() {
-  return [...RB_API_BUILTIN];
+  const preferred = preferredRbBase();
+  return preferred
+    ? [preferred, ...RB_API_BUILTIN.filter((base) => base !== preferred)]
+    : [...RB_API_BUILTIN];
+}
+
+/** Remember which endpoint answered so future visits skip a dead one. */
+function rememberRbBase(base) {
+  try {
+    localStorage.setItem(RB_API_MEMO_KEY, JSON.stringify({ b: base, t: Date.now() }));
+  } catch { /* storage disabled / full — the session pick is enough */ }
+}
+
+/** Drop the remembered endpoint after a total failure, so the next try re-probes. */
+function forgetRbBase() {
+  try {
+    localStorage.removeItem(RB_API_MEMO_KEY);
+  } catch { /* ignore */ }
+}
+
+/**
+ * Decide once per session which endpoint to use. The preferred endpoint is
+ * probed with a lightweight request; the direct official server must answer
+ * quickly (RB_API_PROBE_TIMEOUT) to be worth it, while the proxy gets the full
+ * timeout because it is the fallback of last resort. The winner is remembered
+ * for the session and between visits. Best-effort: if nothing answers, the
+ * normal request path below will retry and surface the real error.
+ */
+async function probeRbEndpoint() {
+  if (state.rb.api) return;                  // already decided this session
+  for (const base of rbApiBases()) {
+    const timeout = base === RB_API_OFFICIAL ? RB_API_PROBE_TIMEOUT : RB_API_TIMEOUT;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(`${base}/json/tags?limit=1`, {
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) continue;
+      await response.json();                 // only trust a real JSON reply
+      state.rb.api = base;
+      rememberRbBase(base);
+      return;
+    } catch {
+      /* blocked / timed out — try the next endpoint */
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 }
 
 /**
@@ -474,10 +544,8 @@ function rbApiBases() {
  * hanging. The endpoint that answered is remembered for the session.
  */
 async function rbFetchJson(path, options = {}) {
-  const bases = state.rb.api
-    ? [state.rb.api, ...rbApiBases().filter((base) => base !== state.rb.api)]
-    : rbApiBases();
-  const timeout = options.timeout ?? 10_000;
+  const bases = rbApiBases();
+  const timeout = options.timeout ?? RB_API_TIMEOUT;
   const attempts = Math.max(1, options.attempts ?? 2);
   let lastError = null;
 
@@ -500,6 +568,7 @@ async function rbFetchJson(path, options = {}) {
         const data = await response.json();     // still inside the timeout window
         clearTimeout(timer);
         state.rb.api = base;                    // remember the winner for this session
+        rememberRbBase(base);                   // …and for the next visit
         return data;
       } catch (err) {
         clearTimeout(timer);
@@ -512,6 +581,7 @@ async function rbFetchJson(path, options = {}) {
   }
 
   state.rb.api = '';
+  forgetRbBase();
   throw lastError ?? new Error('каталог радио недоступен');
 }
 
@@ -625,6 +695,7 @@ async function loadRb() {
   updateButtons();
 
   try {
+    await probeRbEndpoint();
     try {
       await loadRbFacets();
     } catch {
@@ -1226,7 +1297,7 @@ async function changeQuality(newKind) {
  */
 function trackRbClick(channel) {
   if (channel.source !== 'radiobrowser' || !channel.uuid) return;
-  const base = state.rb.api || RB_API_BUILTIN.find(Boolean);
+  const base = preferredRbBase();
   if (!base) return;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
@@ -1395,8 +1466,11 @@ let nowPlayingTimer = 0;
 
 /**
  * Ask the bundled proxy to read the live stream's ICY "now playing" title.
- * The browser cannot do this itself (no CORS on the audio stream), and the
- * title is best-effort: any failure just returns '' and the caller falls back.
+ * The browser cannot do this itself (no CORS on the audio stream), so the
+ * proxy is genuinely required here regardless of which catalogue endpoint the
+ * client uses — unlike the JSON catalogue, which is fetched directly whenever
+ * the official server is reachable. The title is best-effort: any failure just
+ * returns '' and the caller falls back.
  */
 async function fetchIcyTitle(channel) {
   if (!RB_API_PROXY || !channel.stream) return '';
