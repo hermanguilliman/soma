@@ -66,10 +66,10 @@ const SOURCES = {
   somafm: {
     id: 'somafm',
     label: 'SomaFM',
-    pageTitle: 'Актуальный плейлист SomaFM',
+    pageTitle: 'Плейлист SomaFM',
     file: 'SomaFM.m3u8',
     searchPlaceholder: 'Поиск: название, жанр, описание…',
-    nowPrefix: 'Играет',
+    nowPrefix: '',
     listenersTitle: 'слушателей',
     album: 'SomaFM (soma.guilliman.ru)',
     cols: { title: 'Станция', genre: 'Жанр', now: 'Сейчас играет', listeners: 'Слушат.' },
@@ -77,11 +77,11 @@ const SOURCES = {
   },
   radiobrowser: {
     id: 'radiobrowser',
-    label: 'Всё радио',
-    pageTitle: 'Всё радио',
+    label: 'Весь мир',
+    pageTitle: 'Все станции мира',
     file: 'Radio.m3u8',
     searchPlaceholder: 'Поиск по названию станции…',
-    nowPrefix: 'Страна',
+    nowPrefix: '',
     listenersTitle: 'голосов',
     album: "Guilliman's Radio (soma.guilliman.ru)",
     cols: { title: 'Станция', genre: 'Теги', now: 'Страна', listeners: 'Голоса' },
@@ -89,11 +89,11 @@ const SOURCES = {
   },
   favorites: {
     id: 'favorites',
-    label: 'Любимое',
-    pageTitle: 'Любимые станции',
+    label: 'Избранное',
+    pageTitle: 'Избранное',
     file: 'Favorites.m3u8',
     searchPlaceholder: 'Поиск по любимым станциям…',
-    nowPrefix: 'Детали',
+    nowPrefix: '',
     listenersTitle: 'рейтинг',
     album: "Guilliman's Radio (soma.guilliman.ru)",
     cols: { title: 'Станция', genre: 'Жанр', now: 'Детали', listeners: 'Рейтинг' },
@@ -128,7 +128,7 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const el = {
-  stats: { channels: $('statChannels'), quality: $('statQuality'), streams: $('statStreams') },
+  stats: { root: $('stats'), channels: $('statChannels'), quality: $('statQuality'), streams: $('statStreams') },
   pageTitle: $('pageTitle'),
   sources: $('sources'),
   statusLine: $('statusLine'),
@@ -179,6 +179,7 @@ const el = {
     mute: $('mute'),
     volume: $('volume'),
     format: $('playerFormat'),
+    fav: $('playerFav'),
   },
 };
 
@@ -343,6 +344,7 @@ function toggleFavorite(id) {
   }
   saveFavorites();
   toast(wasFav ? 'Убрано из любимого' : 'Добавлено в любимое');
+  syncPlayerFav();
 
   // On the favorites tab the list itself changed — repaint the whole thing.
   if (state.source === 'favorites') {
@@ -980,11 +982,13 @@ function readyStatusText() {
 /**
  * Keep the status line in sync with the current playlist.
  * Busy/loading/error texts are owned by their own code paths and left untouched.
+ * When everything is ready the line stays silent — the single stats line
+ * under the page title is the one place that reports readiness.
  */
 function syncStatus() {
   const resolving = viewResolvesStreams() && state.resolve.active;
   if (state.loading || state.error || resolving) return;
-  setStatus(readyStatusText(), 'is-ok');
+  setStatus('', 'is-ok');
 }
 
 /* ----------------------------------------------- sources --- */
@@ -1054,7 +1058,7 @@ function cardHtml(ch, index) {
   const isLive = isCurrent && state.playing;
   const isFav = isFavorite(ch.id);
   const logo = ch.image
-    ? `<img class="card__logo" data-logo src="${esc(ch.image)}" alt="" width="34" height="34" loading="lazy" data-letter="${esc(ch.title.slice(0, 1))}">`
+    ? `<img class="card__logo" data-logo src="${esc(ch.image)}" alt="" width="56" height="56" loading="lazy" data-letter="${esc(ch.title.slice(0, 1))}">`
     : `<span class="card__initial" aria-hidden="true">${esc(ch.title.slice(0, 1))}</span>`;
   const now = ch.lastPlaying ? esc(ch.lastPlaying) : '—';
   const listeners = Number(ch.listeners || 0);
@@ -1074,13 +1078,16 @@ function cardHtml(ch, index) {
       <div class="card__actions">${fav}${info}</div>
       <div class="card__main" tabindex="0" role="button" aria-pressed="${isLive}" aria-label="${isLive ? 'Пауза' : 'Слушать'} ${esc(ch.title)}">
         <span class="card__num" aria-hidden="true">${String(index + 1).padStart(2, '0')}</span>
+        <span class="card__eq" aria-hidden="true"><i></i><i></i><i></i></span>
         <div class="card__name">
-          <div class="card__thumb">${logo}</div>
+          <div class="card__thumb">${logo}<span class="card__play" aria-hidden="true">
+            <svg class="i-play" viewBox="0 0 16 16"><path d="M5 3.2v9.6L13 8z"/></svg>
+            <svg class="i-pause" viewBox="0 0 16 16"><path d="M4.5 3h2.6v10H4.5zM8.9 3h2.6v10H8.9z"/></svg>
+          </span></div>
           <h2 class="card__title">${esc(ch.title)}</h2>
-          <span class="card__eq" aria-hidden="true"><i></i><i></i><i></i></span>
         </div>
         <span class="card__genre" title="${esc(ch.description || ch.genre)}">${esc(ch.genre)}</span>
-        <span class="card__now"><b>${esc(meta.nowPrefix)}:</b> ${now}</span>
+        <span class="card__now">${now}</span>
         <span class="card__listeners" title="${esc(meta.listenersTitle)}">${listeners}</span>
       </div>
     </div>`;
@@ -1219,6 +1226,7 @@ function setStatus(text, modifier) {
 }
 
 const updateStats = () => {
+  el.stats.root.setAttribute('aria-busy', String(state.loading));
   el.stats.channels.textContent = String(currentList().length || '—');
   el.stats.quality.textContent = qualityStatText();
   updateStreamStat();
@@ -1412,6 +1420,18 @@ function setPlayerNow(text) {
   el.player.now.textContent = text;
 }
 
+/** Keep the player's star in sync with the current station's favorite state. */
+function syncPlayerFav() {
+  const channel = state.currentId ? byId(state.currentId) : null;
+  const favBtn = el.player.fav;
+  favBtn.disabled = !channel;
+  const isFav = Boolean(channel) && isFavorite(channel.id);
+  favBtn.setAttribute('aria-pressed', String(isFav));
+  favBtn.setAttribute('aria-label', channel
+    ? `${isFav ? 'Убрать из любимого' : 'Добавить в любимое'}: ${channel.title}`
+    : 'Добавить в любимое');
+}
+
 function updatePlayButtons() {
   const hasSource = Boolean(state.currentId);
   el.player.toggle.disabled = !hasSource;
@@ -1419,6 +1439,7 @@ function updatePlayButtons() {
   el.player.next.disabled = !hasSource;
   document.body.classList.toggle('is-playing', state.playing);
   el.player.toggle.setAttribute('aria-label', state.playing ? 'Пауза' : 'Воспроизвести');
+  syncPlayerFav();
 
   for (const card of el.grid.querySelectorAll('.card')) {
     const current = card.dataset.id === state.currentId;
@@ -1534,7 +1555,7 @@ function refreshNowPlaying() {
       setPlayerNow(`${current.artist} — ${current.title}`);
       updateMediaSession(channel);
       const card = el.grid.querySelector(`[data-id="${CSS.escape(channel.id)}"] .card__now`);
-      if (card) card.innerHTML = `<b>Играет:</b> ${esc(`${current.artist} — ${current.title}`)}`;
+      if (card) card.textContent = esc(`${current.artist} — ${current.title}`);
     })
     .catch(() => { /* offline / rate limited — keep the last known track */ })
     .finally(() => {
@@ -1727,6 +1748,9 @@ function bindEvents() {
   el.player.toggle.addEventListener('click', togglePlayback);
   el.player.prev.addEventListener('click', () => step(-1));
   el.player.next.addEventListener('click', () => step(1));
+  el.player.fav.addEventListener('click', () => {
+    if (state.currentId) toggleFavorite(state.currentId);
+  });
 
   // station detail dialog
   el.station.close.addEventListener('click', closeStationDetails);

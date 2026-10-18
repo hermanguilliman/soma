@@ -25,7 +25,7 @@
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
 </head>
 <body>
@@ -39,7 +39,7 @@
 
 <main>
   <div class="pagehead">
-    <h1 id="pageTitle">Актуальный плейлист SomaFM</h1>
+    <h1 id="pageTitle">Плейлист SomaFM</h1>
     <p class="stats" id="stats">
       <span><b id="statChannels">—</b>&nbsp;станций</span>
       <span aria-hidden="true">·</span>
@@ -57,11 +57,11 @@
     </label>
     <label class="source">
       <input type="radio" name="source" value="radiobrowser">
-      <span class="source__name">Всё радио</span>
+      <span class="source__name">Весь мир</span>
     </label>
     <label class="source">
       <input type="radio" name="source" value="favorites">
-      <span class="source__name">Любимое</span>
+      <span class="source__name">Избранное</span>
     </label>
   </fieldset>
 
@@ -157,6 +157,7 @@
   </div>
 
   <div class="notice" id="emptyBox" hidden>
+    <svg class="emptybox__icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m15.3 15.3 4.2 4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
     <b id="emptyTitle">Ничего не найдено.</b>
     <span id="emptyHint">Измените запрос или сбросьте фильтры.</span>
   </div>
@@ -201,6 +202,9 @@
       <svg class="i-mute" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h2.5L8 3v10L4.5 10H2z"/><path d="m10.5 6 4 4m0-4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
     </button>
     <input type="range" id="volume" min="0" max="100" value="80" aria-label="Громкость">
+    <button type="button" class="iconbtn" id="playerFav" aria-pressed="false" aria-label="Добавить в любимое" disabled>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l1.9 3.85 4.25.62-3.07 3 .72 4.23L8 11.3l-3.8 2 .72-4.23-3.07-3 4.25-.62z"/></svg>
+    </button>
   </div>
 </div>
 
