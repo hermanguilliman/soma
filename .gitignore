@@ -9,3 +9,8 @@ npm-debug.log*
 # OS / editor
 .DS_Store
 Thumbs.db
+
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
