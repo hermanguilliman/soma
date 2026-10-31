@@ -40,7 +40,7 @@
   <script>window.yaContextCb = window.yaContextCb || []</script>
   <script src="https://yandex.ru/ads/system/context.js" async></script>
 
-  <!-- Микроразметка Schema.org для поисковых систем -->
+  <!-- Микроразметка Schema.org для поисковых систем (с привязкой к главному домену) -->
   <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -51,6 +51,11 @@
   "applicationCategory": "MultimediaApplication",
   "operatingSystem": "All",
   "inLanguage": "ru",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "Guilliman's Lab",
+    "url": "https://guilliman.ru/"
+  },
   "offers": {
     "@type": "Offer",
     "price": "0",
@@ -77,10 +82,14 @@
   </noscript>
   <!-- /Yandex.Metrika counter -->
 
-  <header class="topbar">
+  <header class="topbar" style="display: flex; align-items: center; justify-content: space-between;">
     <a class="brand" href="./">
       <span class="brand__eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
       <span class="brand__name">Guilliman's <span class="brand__name-acc">Radio</span></span>
+    </a>
+    <a href="https://guilliman.ru/" target="_blank" rel="noopener"
+      style="font-size: 0.8125rem; color: inherit; opacity: 0.65; text-decoration: none;">
+      Все проекты ↗
     </a>
   </header>
 
@@ -225,7 +234,7 @@
     </div>
 
     <!-- Yandex.RTB R-A-20314153-1 -->
-    <div id="yandex_rtb_R-A-20314153-1"></div>
+    <div id="yandex_rtb_R-A-20314153-1" style="margin-top: 2rem;"></div>
     <script>
       window.yaContextCb.push(() => {
         Ya.Context.AdvManager.render({
@@ -264,6 +273,26 @@
       Плейлист собирается в браузере из открытых источников —
       станции и ссылки всегда актуальны.
     </p>
+
+    <!-- Перелинковка: навигация по остальным проектам экосистемы -->
+    <nav aria-label="Другие проекты Guilliman's Lab"
+      style="margin: 0.85rem 0; font-size: 0.8125rem; line-height: 1.7; opacity: 0.85;">
+      <span>Другие инструменты <a href="https://guilliman.ru/"
+          style="color: inherit; text-decoration: underline;">Guilliman's Lab</a>:</span>
+      <a href="https://blog.guilliman.ru/" target="_blank" rel="noopener" style="color: inherit;">Блог</a> ·
+      <a href="https://input.guilliman.ru/" target="_blank" rel="noopener" style="color: inherit;">Тест клавиатуры и
+        мыши</a> ·
+      <a href="https://stl.guilliman.ru/" target="_blank" rel="noopener" style="color: inherit;">3D-просмотр STL</a> ·
+      <a href="https://password.guilliman.ru/" target="_blank" rel="noopener" style="color: inherit;">Генератор
+        паролей</a> ·
+      <a href="https://md.guilliman.ru/" target="_blank" rel="noopener" style="color: inherit;">HTML в Markdown</a> ·
+      <a href="https://keytag.guilliman.ru/" target="_blank" rel="noopener" style="color: inherit;">Бирки для ключей</a>
+      ·
+      <a href="https://tartan.guilliman.ru/" target="_blank" rel="noopener" style="color: inherit;">Генератор
+        тартана</a> ·
+      <a href="https://walgen.guilliman.ru/" target="_blank" rel="noopener" style="color: inherit;">Генератор обоев</a>
+    </nav>
+
     <p>© 2026 Herman Guilliman</p>
   </footer>
 
