@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://soma.guilliman.ru/sitemap.xml
+Sitemap: https://radio.guilliman.ru/sitemap.xml

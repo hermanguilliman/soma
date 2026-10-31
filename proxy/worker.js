@@ -35,12 +35,12 @@ const UPSTREAM_TIMEOUT = 6000; // ms — abandon a stalled upstream request and 
 const UPSTREAM_ATTEMPTS = 3; // transient radio-browser hiccups are common for large replies
 const ICY_TIMEOUT = 6000; // ms — cap the wait for a stream's first metadata block
 const ICY_MAX_BYTES = 512 * 1024; // hard cap on how much stream we read before giving up
-const CONTACT = 'https://soma.guilliman.ru';
+const CONTACT = 'https://radio.guilliman.ru';
 
 // Browsers always send Origin (and/or Referer) on cross-origin requests; only
 // these callers may use the relay. Override via the ALLOWED_ORIGINS var.
 const DEFAULT_ALLOWED_ORIGINS = [
-  'https://soma.guilliman.ru',
+  'https://radio.guilliman.ru',
   'https://hermanguilliman.github.io',
   'http://localhost:8087',
   'http://127.0.0.1:8087',

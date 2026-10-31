@@ -1,5 +1,5 @@
 /* ============================================================
-   Guilliman's Radio (soma.guilliman.ru) — client-side playlist builder.
+   Guilliman's Radio (radio.guilliman.ru) — client-side playlist builder.
    Sources:
      1. SomaFM — fetch channels.xml, pick stream quality (mp3 / aac / aacp),
         resolve every .pls into a direct stream URL.
@@ -83,7 +83,7 @@ const SOURCES = {
         searchPlaceholder: "Поиск: название, жанр, описание…",
         nowPrefix: "",
         listenersTitle: "слушателей",
-        album: "SomaFM (soma.guilliman.ru)",
+        album: "SomaFM (radio.guilliman.ru)",
         cols: {
             title: "Станция",
             genre: "Жанр",
@@ -105,7 +105,7 @@ const SOURCES = {
         searchPlaceholder: "Поиск по названию станции…",
         nowPrefix: "",
         listenersTitle: "голосов",
-        album: "Guilliman's Radio (soma.guilliman.ru)",
+        album: "Guilliman's Radio (radio.guilliman.ru)",
         cols: {
             title: "Станция",
             genre: "Теги",
@@ -127,7 +127,7 @@ const SOURCES = {
         searchPlaceholder: "Поиск по любимым станциям…",
         nowPrefix: "",
         listenersTitle: "рейтинг",
-        album: "Guilliman's Radio (soma.guilliman.ru)",
+        album: "Guilliman's Radio (radio.guilliman.ru)",
         cols: {
             title: "Станция",
             genre: "Жанр",

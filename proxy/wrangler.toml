@@ -5,4 +5,4 @@ compatibility_date = "2024-11-01"
 # The worker only serves the site's own origins (see DEFAULT_ALLOWED_ORIGINS in
 # worker.js). Set ALLOWED_ORIGINS to replace that list (comma-separated):
 # [vars]
-# ALLOWED_ORIGINS = "https://soma.guilliman.ru,https://hermanguilliman.github.io"
+# ALLOWED_ORIGINS = "https://radio.guilliman.ru,https://hermanguilliman.github.io"
